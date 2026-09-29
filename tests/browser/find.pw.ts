@@ -166,12 +166,15 @@ test('find highlights remain inside the PDF after rotation and zoom', async ({ p
   await page.locator('.search-result').nth(10).click();
   const shell = page.locator('.page-shell[data-page="11"]');
   await expect(shell.locator('.search-match.selected')).toHaveText('beta');
-  const bounds = await shell.boundingBox();
-  const mark = await shell.locator('.search-match.selected').boundingBox();
-  expect(mark!.x).toBeGreaterThanOrEqual(bounds!.x);
-  expect(mark!.y).toBeGreaterThanOrEqual(bounds!.y);
-  expect(mark!.x + mark!.width).toBeLessThanOrEqual(bounds!.x + bounds!.width);
-  expect(mark!.y + mark!.height).toBeLessThanOrEqual(bounds!.y + bounds!.height);
+  // Read both rectangles in one frame: result navigation can scroll between
+  // separate browser round trips, especially on a Windows CI runner.
+  const geometry = await shell.evaluate(element => {
+    const bounds = element.getBoundingClientRect();
+    const mark = element.querySelector('.search-match.selected')!.getBoundingClientRect();
+    return { left: mark.left - bounds.left, top: mark.top - bounds.top,
+      right: bounds.right - mark.right, bottom: bounds.bottom - mark.bottom };
+  });
+  for (const inset of Object.values(geometry)) expect(inset).toBeGreaterThanOrEqual(0);
 });
 
 test('scrolling through a long document keeps retained page canvases bounded', async ({ page }) => {
