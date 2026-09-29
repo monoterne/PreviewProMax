@@ -18,6 +18,7 @@ Use current GitHub Actions versions that run on Node 24; do not add Node 20 acti
 - Keep the interface functional and restrained. The first screen is the viewer or a simple open-file state, never a marketing hero.
 - Use the existing light and dark CSS tokens. The sidebar, toolbar, page, and thumbnail should follow the same theme. Keep light PDF pages white and dark PDF pages dark.
 - Keep the toolbar fixed as the PDF pane scrolls; scrolling a document must not move or cover toolbar controls.
+- Use Tauri's native file drop event for PDFs so drops work in the system webview on macOS 15 and newer. Keep the drop overlay tied to native enter, leave, and drop events.
 - Use Radix primitives for interactive patterns such as tabs and switches. Keep native buttons and inputs simple and accessible.
 - Use a system sans-serif font, a consistent 4/8/12/16/24/32px spacing scale, subtle borders, and 6–10px control radii.
 - Avoid decorative gradients, glows, floating cards, oversized headings, eyebrow labels, mottos, filler descriptions, and large shadows.

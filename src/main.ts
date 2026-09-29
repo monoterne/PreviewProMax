@@ -1,7 +1,8 @@
 import * as pdfjs from 'pdfjs-dist';
+import { getCurrentWebview } from '@tauri-apps/api/webview';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import './style.css';
-import { pickPdf, onOpenedPdf, type OpenedDocument } from './desktop';
+import { pickPdf, readPdf, onOpenedPdf, type OpenedDocument } from './desktop';
 import { mountSidebarTabs, mountThemeSwitch } from './radix-controls';
 
 // PDF.js uses recent Map methods that older system webviews may not provide.
@@ -434,14 +435,25 @@ window.addEventListener('keydown', event => {
   if (event.key === 'ArrowLeft' || event.key === 'PageUp') { event.preventDefault(); goToPage(currentPage - 1); }
 });
 onOpenedPdf(openDocument);
-let dragDepth = 0;
-window.addEventListener('dragenter', event => { event.preventDefault(); dragDepth++; $('#drop-overlay').hidden = false; });
-window.addEventListener('dragover', event => { event.preventDefault(); });
-window.addEventListener('dragleave', event => { event.preventDefault(); dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) $('#drop-overlay').hidden = true; });
-window.addEventListener('drop', async event => {
-  event.preventDefault(); dragDepth = 0; $('#drop-overlay').hidden = true;
-  const file = event.dataTransfer?.files[0];
-  if (!file) return;
-  if (!/\.pdf$/i.test(file.name)) { toast('Please drop a PDF file.'); return; }
-  await openDocument({ name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) });
-});
+let lastDropPath = '';
+let lastDropTime = 0;
+void getCurrentWebview().onDragDropEvent(event => {
+  const overlay = $('#drop-overlay');
+  if (event.payload.type === 'enter') {
+    overlay.hidden = false;
+  } else if (event.payload.type === 'leave') {
+    overlay.hidden = true;
+  } else if (event.payload.type === 'drop') {
+    overlay.hidden = true;
+    const path = event.payload.paths[0];
+    if (!path) return;
+    if (!/\.pdf$/i.test(path)) { toast('Please drop a PDF file.'); return; }
+    const now = performance.now();
+    if (path === lastDropPath && now - lastDropTime < 500) return;
+    lastDropPath = path;
+    lastDropTime = now;
+    void readPdf(path).then(openDocument).catch(error => {
+      toast(error instanceof Error ? error.message : 'Unable to open PDF.');
+    });
+  }
+}).catch(error => console.error('Unable to listen for file drops:', error));

@@ -14,7 +14,7 @@
       {
         "label": "main",
         "title": "Preview Pro Max",
-        "dragDropEnabled": false,
+        "dragDropEnabled": true,
         "width": 1320,
         "height": 860,
         "minWidth": 760,

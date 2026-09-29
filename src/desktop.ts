@@ -4,7 +4,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 
 export type OpenedDocument = { name: string; bytes: Uint8Array };
 
-async function readPdf(path: string): Promise<OpenedDocument> {
+export async function readPdf(path: string): Promise<OpenedDocument> {
   const bytes = await invoke<ArrayBuffer>('read_pdf', { path });
   return { name: path.split(/[\\/]/).pop() || 'Document.pdf', bytes: new Uint8Array(bytes) };
 }
