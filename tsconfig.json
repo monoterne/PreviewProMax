@@ -9,9 +9,6 @@
       "ES2022",
       "DOM"
     ],
-    "types": [
-      "node"
-    ],
     "skipLibCheck": true,
     "allowSyntheticDefaultImports": true,
     "jsx": "react-jsx"
