@@ -3,68 +3,29 @@
   "version": "0.1.0",
   "private": true,
   "description": "Desktop PDF viewer for macOS and Windows",
-  "main": "electron/main.js",
   "scripts": {
-    "build:electron": "bun build ./electron/main.ts ./electron/preload.ts --target=node --format=cjs --outdir=electron --external electron",
-    "dev": "bun run build:electron && bun run ensure:electron && concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && electron .\"",
-    "build": "bun run build:electron && vite build",
-    "start": "bun run ensure:electron && electron .",
-    "dist:mac": "bun run build && electron-builder --mac",
-    "dist:win": "bun run build && electron-builder --win",
-    "typecheck": "tsc --noEmit",
-    "ensure:electron": "bun scripts/ensure-electron.ts"
+    "dev:web": "vite --host 127.0.0.1",
+    "build:web": "vite build",
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "dist:mac": "tauri build --bundles app",
+    "dist:win": "tauri build --bundles nsis",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@radix-ui/react-switch": "^1.3.7",
     "@radix-ui/react-tabs": "^1.1.21",
+    "@tauri-apps/api": "^2.12.0",
+    "@tauri-apps/plugin-dialog": "^2.8.0",
     "pdfjs-dist": "^5.4.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
   },
   "devDependencies": {
-    "@electron/get": "^2.0.0",
+    "@tauri-apps/cli": "^2.12.0",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
-    "concurrently": "^9.2.1",
-    "electron": "^38.0.0",
-    "electron-builder": "^26.0.0",
     "typescript": "^5.9.0",
-    "vite": "^7.1.0",
-    "wait-on": "^8.0.0"
-  },
-  "build": {
-    "appId": "com.previewpromax.app",
-    "productName": "Preview Pro Max",
-    "files": [
-      "dist/**/*",
-      "electron/**/*",
-      "package.json"
-    ],
-    "directories": {
-      "output": "release"
-    },
-    "mac": {
-      "target": [
-        "dmg",
-        "zip"
-      ],
-      "category": "public.app-category.productivity"
-    },
-    "win": {
-      "target": [
-        "nsis",
-        "portable"
-      ]
-    },
-    "fileAssociations": [
-      {
-        "ext": "pdf",
-        "name": "PDF document",
-        "role": "Viewer"
-      }
-    ]
-  },
-  "trustedDependencies": [
-    "electron"
-  ]
+    "vite": "^7.1.0"
+  }
 }

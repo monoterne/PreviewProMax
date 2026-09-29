@@ -52,10 +52,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
   padding: 0 16px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
-  -webkit-app-region: drag;
 }
-body[data-platform="darwin"] .toolbar { padding-left: 80px; }
-.toolbar button, .toolbar input, .toolbar label { -webkit-app-region: no-drag; }
 .toolbar-left, .toolbar-center, .toolbar-right { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .toolbar-left, .toolbar-right { flex: 1; }
 .toolbar-right { justify-content: flex-end; gap: 8px; }

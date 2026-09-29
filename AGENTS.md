@@ -1,11 +1,23 @@
 # Project guidance
 
-Preview Pro Max is a desktop PDF viewer built with Electron, Bun, TypeScript, React, Radix UI, and PDF.js. Use `bun run typecheck` and `bun run build` after renderer changes.
+Preview Pro Max is a desktop PDF viewer built with Tauri 2, Bun, TypeScript, React, Radix UI, and PDF.js. Bun installs dependencies and builds the web UI. Rust builds the native shell. Released apps must not embed Node, Bun, or Chromium.
+
+Run `bun run typecheck` and `bun run build:web` after renderer changes. Run `bun run dist:mac` on macOS or `bun run dist:win` on Windows after native, packaging, or dependency changes. Verify the GitHub Actions artifacts on both platforms before claiming release support.
+Use current GitHub Actions versions that run on Node 24; do not add Node 20 actions or a Node.js setup step. Keep Bun as the package manager and frontend build tool, and keep application code in TypeScript or Rust.
+
+## Size and memory
+
+- Keep the Rust release profile optimized for size: one codegen unit, LTO, `opt-level = "z"`, abort on panic, stripped symbols, and no incremental release build.
+- Add native plugins and bundled assets only when required by a user feature. Use the operating system webview and keep Bun as a build tool only.
+- Keep PDF pages and thumbnails lazy. Evict canvases far outside the viewport, cap page raster pixels, and avoid retaining duplicate PDF byte buffers or text indexes unnecessarily.
+- Preserve the single macOS `.app` bundle and portable Windows `.exe` as downloadable artifacts. The NSIS installer is also provided for Windows systems that need WebView2 setup.
+- When changing rendering or dependencies, compare bundle size and test scrolling through a long PDF for memory growth and visual regressions. Do not trade away correct rendering, text selection, or accessibility just to reduce bytes.
 
 ## UI rules
 
 - Keep the interface functional and restrained. The first screen is the viewer or a simple open-file state, never a marketing hero.
 - Use the existing light and dark CSS tokens. The sidebar, toolbar, page, and thumbnail should follow the same theme. Keep light PDF pages white and dark PDF pages dark.
+- Keep the toolbar fixed as the PDF pane scrolls; scrolling a document must not move or cover toolbar controls.
 - Use Radix primitives for interactive patterns such as tabs and switches. Keep native buttons and inputs simple and accessible.
 - Use a system sans-serif font, a consistent 4/8/12/16/24/32px spacing scale, subtle borders, and 6–10px control radii.
 - Avoid decorative gradients, glows, floating cards, oversized headings, eyebrow labels, mottos, filler descriptions, and large shadows.

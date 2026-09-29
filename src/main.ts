@@ -1,9 +1,10 @@
 import * as pdfjs from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import './style.css';
+import { pickPdf, onOpenedPdf, type OpenedDocument } from './desktop';
 import { mountSidebarTabs, mountThemeSwitch } from './radix-controls';
 
-// PDF.js uses the recent Map upsert methods before Electron's Chromium ships them.
+// PDF.js uses recent Map methods that older system webviews may not provide.
 const mapPrototype = Map.prototype as Map<unknown, unknown> & {
   getOrInsert?: (key: unknown, value: unknown) => unknown;
   getOrInsertComputed?: (key: unknown, callback: (key: unknown) => unknown) => unknown;
@@ -18,18 +19,6 @@ mapPrototype.getOrInsertComputed ??= function (key, callback) {
 };
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
-
-type OpenedDocument = { name: string; bytes: Uint8Array };
-declare global {
-  interface Window {
-    desktop: {
-      platform: string;
-      openPdf: () => Promise<OpenedDocument | null>;
-      onDocument: (callback: (document: OpenedDocument) => void) => () => void;
-      onAction: (callback: (action: string) => void) => () => void;
-    };
-  }
-}
 
 type PdfDocument = pdfjs.PDFDocumentProxy;
 type Dimensions = { width: number; height: number };
@@ -51,7 +40,6 @@ function icon(name: string, size = 18) { return `<svg width="${size}" height="${
 function escapeHtml(text: string) { return text.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!); }
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
-document.body.dataset.platform = window.desktop?.platform ?? 'web';
 document.documentElement.dataset.theme = 'light';
 app.innerHTML = `
   <header class="toolbar">
@@ -226,7 +214,7 @@ async function renderPage(shell: HTMLElement, epoch: number) {
       shell.style.height = `${d.height * zoom}px`;
     }
     const viewport = page.getViewport({ scale: zoom, rotation });
-    const ratio = Math.min(window.devicePixelRatio || 1, 2);
+    const ratio = Math.min(window.devicePixelRatio || 1, 2, Math.sqrt(8_000_000 / (viewport.width * viewport.height)));
     const canvas = document.createElement('canvas');
     canvas.width = Math.floor(viewport.width * ratio);
     canvas.height = Math.floor(viewport.height * ratio);
@@ -253,6 +241,24 @@ async function renderPage(shell: HTMLElement, epoch: number) {
     console.error(error);
   } finally { shell.dataset.rendering = 'false'; }
 }
+function trimRenderedPages() {
+  const view = viewer.getBoundingClientRect();
+  const margin = viewer.clientHeight * 1.5;
+  pages.querySelectorAll<HTMLElement>('.page-shell[data-rendered="true"]').forEach(shell => {
+    const rect = shell.getBoundingClientRect();
+    if (rect.bottom < view.top - margin || rect.top > view.bottom + margin) {
+      shell.querySelector('canvas')?.remove();
+      shell.querySelector('.textLayer')?.remove();
+      shell.dataset.rendered = 'false';
+      if (!shell.querySelector('.page-loading')) {
+        const loading = document.createElement('div');
+        loading.className = 'page-loading';
+        shell.prepend(loading);
+      }
+    }
+  });
+}
+
 function highlightVisibleText(shell: HTMLElement) {
   const query = $<HTMLInputElement>('#search-input').value.trim().toLocaleLowerCase();
   shell.querySelectorAll<HTMLElement>('.textLayer span').forEach(span => {
@@ -272,7 +278,17 @@ function makeThumbnails() {
     thumbs.appendChild(button);
   }
   thumbObserver = new IntersectionObserver(entries => {
-    for (const entry of entries) if (entry.isIntersecting) renderThumbnail(entry.target as HTMLElement, renderEpoch);
+    for (const entry of entries) {
+      const button = entry.target as HTMLElement;
+      button.dataset.visible = String(entry.isIntersecting);
+      if (entry.isIntersecting) renderThumbnail(button, renderEpoch);
+      else if (button.dataset.rendered === 'true') {
+        const placeholder = document.createElement('span');
+        placeholder.className = 'thumbnail-placeholder';
+        button.querySelector('.thumbnail-paper')?.replaceChildren(placeholder);
+        button.dataset.rendered = '';
+      }
+    }
   }, { root: thumbs, rootMargin: '300px 0px' });
   thumbs.querySelectorAll('.thumbnail').forEach(el => thumbObserver!.observe(el));
   $('#thumb-count').textContent = `${pdf.numPages} ${pdf.numPages === 1 ? 'page' : 'pages'}`;
@@ -293,10 +309,11 @@ async function renderThumbnail(button: HTMLElement, _epoch: number) {
     canvas.style.width = `${viewport.width}px`;
     canvas.style.height = `${viewport.height}px`;
     await page.render({ canvasContext: canvas.getContext('2d')!, canvas, viewport, transform: [1.5, 0, 0, 1.5, 0, 0] }).promise;
-    if (pdf !== sourcePdf) return;
+    if (pdf !== sourcePdf || button.dataset.visible !== 'true') return;
     button.querySelector('.thumbnail-paper')!.replaceChildren(canvas);
     button.dataset.rendered = 'true';
-  } catch { button.dataset.rendered = ''; }
+  } catch { /* Keep the placeholder until the page is visible again. */ }
+  finally { if (button.dataset.rendered === 'loading') button.dataset.rendered = ''; }
 }
 async function openDocument(file: OpenedDocument) {
   try {
@@ -343,7 +360,7 @@ async function openDocument(file: OpenedDocument) {
 }
 async function pickDocument() {
   try {
-    const document = await window.desktop.openPdf();
+    const document = await pickPdf();
     if (document) await openDocument(document);
   } catch (error) { toast(error instanceof Error ? error.message : 'Unable to open PDF.'); }
 }
@@ -404,6 +421,7 @@ viewer.addEventListener('scroll', () => {
     if (gap < distance) { distance = gap; nearest = Number(shell.dataset.page); }
   });
   if (nearest !== currentPage) { currentPage = nearest; updatePageUi(); }
+  trimRenderedPages();
 }, { passive: true });
 new ResizeObserver(() => refreshFitIfNeeded()).observe(viewer);
 window.addEventListener('keydown', event => {
@@ -415,13 +433,7 @@ window.addEventListener('keydown', event => {
   if (event.key === 'ArrowRight' || event.key === 'PageDown') { event.preventDefault(); goToPage(currentPage + 1); }
   if (event.key === 'ArrowLeft' || event.key === 'PageUp') { event.preventDefault(); goToPage(currentPage - 1); }
 });
-window.desktop.onDocument(openDocument);
-window.desktop.onAction(action => {
-  if (action === 'open') pickDocument();
-  if (action === 'find' && pdf) { setSidebar(true); showTab('search'); }
-  if (action === 'zoom-in') setZoom(zoom + 0.15);
-  if (action === 'zoom-out') setZoom(zoom - 0.15);
-});
+onOpenedPdf(openDocument);
 let dragDepth = 0;
 window.addEventListener('dragenter', event => { event.preventDefault(); dragDepth++; $('#drop-overlay').hidden = false; });
 window.addEventListener('dragover', event => { event.preventDefault(); });

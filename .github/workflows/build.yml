@@ -13,20 +13,30 @@ jobs:
         include:
           - os: macos-latest
             target: mac
+            bundles: app
           - os: windows-latest
             target: win
+            bundles: nsis
     runs-on: ${{ matrix.os }}
-    env:
-      CSC_IDENTITY_AUTO_DISCOVERY: "false"
     steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2.2.0
+      - uses: dtolnay/rust-toolchain@stable
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
-      - run: bun run build
-      - run: bunx electron-builder --${{ matrix.target }} --publish never
-      - uses: actions/upload-artifact@v4
+      - run: bun tauri build --bundles ${{ matrix.bundles }}
+      - name: Prepare downloads
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            ditto -c -k --sequesterRsrc --keepParent "src-tauri/target/release/bundle/macos/Preview Pro Max.app" "artifacts/PreviewProMax-mac.app.zip"
+          else
+            cp src-tauri/target/release/preview-pro-max.exe artifacts/PreviewProMax-portable.exe
+            cp src-tauri/target/release/bundle/nsis/*.exe artifacts/
+          fi
+      - uses: actions/upload-artifact@v7
         with:
           name: preview-pro-max-${{ matrix.target }}
-          path: release/*
+          path: artifacts/*
           if-no-files-found: error
