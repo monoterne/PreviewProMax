@@ -10,3 +10,10 @@ test('lists every occurrence on a page, ignoring case and repeated whitespace', 
 test('returns no occurrences for an empty query', () => {
   expect(findOccurrences('text', '', 1)).toEqual([]);
 });
+
+test('keeps source offsets for matches across PDF text chunks and line breaks', () => {
+  const text = 'Before search\n  target and search target';
+  const hits = findOccurrences(text, 'search target', 1);
+  expect(hits.map(hit => text.slice(hit.start, hit.end))).toEqual(['search\n  target', 'search target']);
+  expect(hits.map(hit => hit.snippet.slice(hit.matchStart, hit.matchEnd))).toEqual(['search target', 'search target']);
+});

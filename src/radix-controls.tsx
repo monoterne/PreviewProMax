@@ -29,7 +29,7 @@ export function mountSidebarTabs(node: HTMLElement, onTabChange: (tab: SidebarTa
         <Tabs.Content className="sidebar-pane" value="search" forceMount>
           <label className="search-label" htmlFor="search-input">Find in document</label>
           <input id="search-input" className="search-input" type="search" placeholder="Search text" autoComplete="off" />
-          <div id="search-status" className="search-status">Enter text to search.</div>
+          <div id="search-status" className="search-status" role="status" aria-live="polite">Enter text to search.</div>
           <div id="search-results" className="search-results" />
         </Tabs.Content>
       </Tabs.Root>

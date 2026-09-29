@@ -119,14 +119,17 @@ let rotation = 0;
 let sidebarVisible = true;
 let dimensions: Dimensions[] = [];
 let renderEpoch = 0;
+let navigationEpoch = 0;
 let searchEpoch = 0;
 let hits: SearchHit[] = [];
 let selectedHit: SearchHit | null = null;
+let pendingHitNavigation: SearchHit | null = null;
 let darkMode = false;
 let invertImages = true;
 let toastTimer: number | undefined;
 let pageObserver: IntersectionObserver | null = null;
 let thumbObserver: IntersectionObserver | null = null;
+const renderedText = new WeakMap<HTMLElement, { divs: HTMLElement[]; strings: string[]; eols: boolean[] }>();
 
 function toast(message: string, duration = 3500) {
   const el = $('#toast');
@@ -159,32 +162,54 @@ function showTab(tab: 'pages' | 'search') {
   if (tab === 'search') queueMicrotask(() => $<HTMLInputElement>('#search-input').focus());
 }
 function setSidebar(visible: boolean) {
+  const wasShown = !$('#sidebar').hidden;
   sidebarVisible = visible;
-  $('#sidebar').hidden = !visible || !pdf;
-  $('#sidebar-toggle').classList.toggle('selected', visible && !!pdf);
-  window.setTimeout(() => { if (pdf) refreshFitIfNeeded(); }, 40);
+  const shown = visible && !!pdf;
+  $('#sidebar').hidden = !shown;
+  $('#sidebar-toggle').classList.toggle('selected', shown);
+  if (wasShown !== shown) window.setTimeout(() => { if (pdf) refreshFitIfNeeded(); }, 40);
 }
-function updatePageUi() {
+function updatePageUi(revealThumbnail = false) {
   if (!pdf) return;
   pageNumber.value = String(currentPage);
   $('#page-total').textContent = `/ ${pdf.numPages}`;
   document.querySelectorAll<HTMLElement>('.thumbnail').forEach((el) => el.classList.toggle('active', Number(el.dataset.page) === currentPage));
   const active = thumbs.querySelector<HTMLElement>('.thumbnail.active');
-  if (active && activeTab === 'pages') {
+  if (revealThumbnail && active && activeTab === 'pages') {
     const item = active.getBoundingClientRect();
     const list = thumbs.getBoundingClientRect();
     if (item.top < list.top) thumbs.scrollTop += item.top - list.top - 8;
     else if (item.bottom > list.bottom) thumbs.scrollTop += item.bottom - list.bottom + 8;
   }
 }
-function goToPage(number: number) {
+async function goToPage(number: number) {
   if (!pdf) return;
-  currentPage = Math.max(1, Math.min(pdf.numPages, Math.round(number) || 1));
-  updatePageUi();
+  const sourcePdf = pdf;
+  const target = Math.max(1, Math.min(pdf.numPages, Math.round(number) || 1));
+  const epoch = ++navigationEpoch;
+  if (!dimensions[target - 1]) {
+    try {
+      const page = await sourcePdf.getPage(target);
+      if (pdf !== sourcePdf || epoch !== navigationEpoch) return;
+      const viewport = page.getViewport({ scale: 1 });
+      dimensions[target - 1] = { width: viewport.width, height: viewport.height };
+      const shell = pages.querySelector<HTMLElement>(`.page-shell[data-page="${target}"]`);
+      const d = pageDimensions(target - 1);
+      if (shell) {
+        shell.style.width = `${d.width * zoom}px`;
+        shell.style.height = `${d.height * zoom}px`;
+      }
+      const button = thumbs.querySelector<HTMLElement>(`.thumbnail[data-page="${target}"]`);
+      if (button) setThumbnailSize(button, d);
+    } catch (error) { console.error('Unable to read page dimensions:', error); }
+  }
+  if (pdf !== sourcePdf || epoch !== navigationEpoch) return;
+  currentPage = target;
+  updatePageUi(true);
   const shell = pages.querySelector<HTMLElement>(`.page-shell[data-page="${currentPage}"]`);
   if (shell) {
     const offset = shell.getBoundingClientRect().top - viewer.getBoundingClientRect().top;
-    viewer.scrollTo({ top: viewer.scrollTop + offset - 24, behavior: 'smooth' });
+    viewer.scrollTo({ top: viewer.scrollTop + offset - 24, behavior: 'auto' });
   }
 }
 function pageDimensions(index: number): Dimensions {
@@ -271,12 +296,19 @@ async function renderPage(shell: HTMLElement, epoch: number) {
     try {
       const text = new pdfjs.TextLayer({ textContentSource: page.streamTextContent(), container: textLayer, viewport });
       await text.render();
+      const divs = text.textDivs as HTMLElement[];
+      renderedText.set(shell, {
+        divs,
+        strings: text.textContentItemsStr,
+        eols: divs.map(div => div.nextElementSibling?.tagName === 'BR')
+      });
     } catch { /* Image-only PDFs still render correctly. */ }
     if (epoch !== renderEpoch) return;
     shell.querySelector('.page-loading')?.remove();
     shell.prepend(canvas, textLayer);
     shell.dataset.rendered = 'true';
     highlightVisibleText(shell);
+    if (pendingHitNavigation?.page === number && scrollToSelectedMatch(shell)) pendingHitNavigation = null;
   } catch (error) {
     if (epoch === renderEpoch) shell.querySelector('.page-loading')!.textContent = 'Unable to render this page';
     console.error(error);
@@ -292,6 +324,7 @@ function trimRenderedPages() {
       canvas?.remove();
       if (canvas) { canvas.width = 0; canvas.height = 0; }
       shell.querySelector('.textLayer')?.remove();
+      renderedText.delete(shell);
       shell.dataset.rendered = 'false';
       if (!shell.querySelector('.page-loading')) {
         const loading = document.createElement('div');
@@ -303,37 +336,69 @@ function trimRenderedPages() {
 }
 
 function highlightVisibleText(shell: HTMLElement) {
-  const query = $<HTMLInputElement>('#search-input').value.trim().toLocaleLowerCase();
-  let occurrence = 0;
-  shell.querySelectorAll<HTMLElement>('.textLayer span').forEach(span => {
-    const source = span.textContent || '';
-    if (!query) { span.textContent = source; return; }
-    const lower = source.toLocaleLowerCase();
+  const layer = renderedText.get(shell);
+  if (!layer) return;
+  const query = $<HTMLInputElement>('#search-input').value.trim();
+  const page = Number(shell.dataset.page);
+  const pageText = layer.strings.map((value, index) => value + (layer.eols[index] ? ' ' : '')).join('');
+  const matches = findOccurrences(pageText, query, page);
+  let itemStart = 0;
+  layer.divs.forEach((span, index) => {
+    const source = layer.strings[index];
+    const itemEnd = itemStart + source.length;
+    if (!source || !query) { span.textContent = source; itemStart = itemEnd + (layer.eols[index] ? 1 : 0); return; }
     const content = document.createDocumentFragment();
     let from = 0;
-    while (from < source.length) {
-      const position = lower.indexOf(query, from);
-      if (position === -1) break;
-      content.append(document.createTextNode(source.slice(from, position)));
+    for (const hit of matches) {
+      if (hit.end <= itemStart || hit.start >= itemEnd) continue;
+      const start = Math.max(from, hit.start - itemStart);
+      const end = Math.min(source.length, hit.end - itemStart);
+      if (end <= start) continue;
+      content.append(document.createTextNode(source.slice(from, start)));
       const mark = document.createElement('mark');
       mark.className = 'search-match';
-      mark.dataset.occurrence = String(++occurrence);
-      mark.textContent = source.slice(position, position + query.length);
+      if (selectedHit?.page === page && selectedHit.occurrence === hit.occurrence) mark.classList.add('selected');
+      mark.dataset.occurrence = String(hit.occurrence);
+      mark.textContent = source.slice(start, end);
       content.append(mark);
-      from = position + query.length;
+      from = end;
     }
     content.append(document.createTextNode(source.slice(from)));
     span.replaceChildren(content);
+    itemStart = itemEnd + (layer.eols[index] ? 1 : 0);
   });
-  if (selectedHit?.page === Number(shell.dataset.page)) scrollToSelectedMatch(shell);
 }
 function scrollToSelectedMatch(shell: HTMLElement) {
   if (!selectedHit) return false;
   const mark = shell.querySelector<HTMLElement>(`mark[data-occurrence="${selectedHit.occurrence}"]`);
   if (!mark) return false;
   const offset = mark.getBoundingClientRect().top - viewer.getBoundingClientRect().top;
-  viewer.scrollTo({ top: viewer.scrollTop + offset - viewer.clientHeight * 0.32, behavior: 'smooth' });
+  viewer.scrollTo({ top: viewer.scrollTop + offset - viewer.clientHeight * 0.32, behavior: 'auto' });
   return true;
+}
+function selectSearchHit(index: number) {
+  const hit = hits[index];
+  if (!hit) return;
+  selectedHit = hit;
+  pendingHitNavigation = hit;
+  $('#search-results').querySelectorAll<HTMLElement>('.search-result').forEach((result, resultIndex) => {
+    result.classList.toggle('active', resultIndex === index);
+  });
+  const shell = pages.querySelector<HTMLElement>(`.page-shell[data-page="${hit.page}"]`);
+  if (shell) highlightVisibleText(shell);
+  if (shell?.dataset.rendered === 'true' && scrollToSelectedMatch(shell)) pendingHitNavigation = null;
+  else goToPage(hit.page);
+}
+function thumbnailSize(d: Dimensions): Dimensions {
+  const scale = Math.min(124 / d.width, 170 / d.height);
+  return { width: Math.max(1, d.width * scale), height: Math.max(1, d.height * scale) };
+}
+function setThumbnailSize(button: HTMLElement, d: Dimensions): Dimensions {
+  const size = thumbnailSize(d);
+  const paper = button.querySelector<HTMLElement>('.thumbnail-paper')!;
+  paper.style.width = `${size.width + 2}px`;
+  paper.style.height = `${size.height + 2}px`;
+  return size;
 }
 function makeThumbnails() {
   if (!pdf) return;
@@ -345,6 +410,7 @@ function makeThumbnails() {
     button.className = 'thumbnail';
     button.dataset.page = String(i);
     button.innerHTML = `<div class="thumbnail-paper"><span class="thumbnail-placeholder"></span></div><span class="thumbnail-number">${i}</span>`;
+    setThumbnailSize(button, pageDimensions(i - 1));
     button.addEventListener('click', () => goToPage(i));
     thumbs.appendChild(button);
   }
@@ -374,7 +440,8 @@ async function renderThumbnail(button: HTMLElement, epoch: number) {
     const page = await pdf.getPage(Number(button.dataset.page));
     if (pdf !== sourcePdf || epoch !== renderEpoch) return;
     const natural = page.getViewport({ scale: 1, rotation });
-    const viewport = page.getViewport({ scale: 126 / natural.width, rotation });
+    const size = setThumbnailSize(button, { width: natural.width, height: natural.height });
+    const viewport = page.getViewport({ scale: size.width / natural.width, rotation });
     const canvas = document.createElement('canvas');
     canvas.width = Math.ceil(viewport.width * 1.5);
     canvas.height = Math.ceil(viewport.height * 1.5);
@@ -419,6 +486,7 @@ async function openDocument(file: OpenedDocument) {
   try {
     searchEpoch++;
     renderEpoch++;
+    navigationEpoch++;
     pageObserver?.disconnect();
     thumbObserver?.disconnect();
     await pdf?.destroy();
@@ -447,6 +515,7 @@ async function openDocument(file: OpenedDocument) {
     $<HTMLInputElement>('#search-input').value = '';
     hits = [];
     selectedHit = null;
+    pendingHitNavigation = null;
     $('#search-results').innerHTML = '';
     $('#search-status').textContent = 'Enter text to search.';
     rebuildPages();
@@ -466,33 +535,32 @@ async function pickDocument() {
 }
 async function searchDocument() {
   if (!pdf) return;
+  const sourcePdf = pdf;
   const query = $<HTMLInputElement>('#search-input').value.trim();
   const epoch = ++searchEpoch;
+  const nextHits: SearchHit[] = [];
   hits = [];
   selectedHit = null;
+  pendingHitNavigation = null;
   $('#search-results').innerHTML = '';
-  if (!query) { $('#search-status').textContent = 'Enter text to search.'; pages.querySelectorAll('.page-shell').forEach(shell => highlightVisibleText(shell as HTMLElement)); return; }
+  pages.querySelectorAll<HTMLElement>('.page-shell').forEach(highlightVisibleText);
+  if (!query) { $('#search-status').textContent = 'Enter text to search.'; return; }
   $('#search-status').textContent = 'Searching…';
-  for (let page = 1; page <= pdf.numPages; page++) {
+  for (let page = 1; page <= sourcePdf.numPages; page++) {
     if (epoch !== searchEpoch) return;
     try {
-      const content = await pdf.getPage(page).then(p => p.getTextContent());
+      const content = await sourcePdf.getPage(page).then(p => p.getTextContent());
+      if (epoch !== searchEpoch || sourcePdf !== pdf) return;
       const text = content.items.map(item => 'str' in item ? `${item.str}${item.hasEOL ? ' ' : ''}` : '').join('');
-      for (const hit of findOccurrences(text, query, page)) hits.push(hit);
+      for (const hit of findOccurrences(text, query, page)) nextHits.push(hit);
     } catch { /* Skip pages without readable text. */ }
     if (page % 10 === 0) await new Promise(resolve => setTimeout(resolve, 0));
   }
-  if (epoch !== searchEpoch) return;
+  if (epoch !== searchEpoch || sourcePdf !== pdf) return;
+  hits = nextHits;
   $('#search-status').textContent = hits.length ? `${hits.length} ${hits.length === 1 ? 'match' : 'matches'} found` : 'No matches found';
-  $('#search-results').innerHTML = hits.map((hit, index) => `<button class="search-result" data-index="${index}"><span>Page ${hit.page} · match ${hit.occurrence}</span><p>${escapeHtml(hit.snippet)}</p></button>`).join('');
-  $('#search-results').querySelectorAll<HTMLButtonElement>('button').forEach(button => button.addEventListener('click', () => {
-    const hit = hits[Number(button.dataset.index)];
-    if (!hit) return;
-    selectedHit = hit;
-    $('#search-results').querySelectorAll('.search-result').forEach(result => result.classList.toggle('active', result === button));
-    const shell = pages.querySelector<HTMLElement>(`.page-shell[data-page="${hit.page}"]`);
-    if (!shell || !scrollToSelectedMatch(shell)) goToPage(hit.page);
-  }));
+  $('#search-results').innerHTML = hits.map((hit, index) => `<button class="search-result" type="button" data-index="${index}"><span class="search-result-location">Page ${hit.page} · match ${hit.occurrence}</span><span class="search-snippet">${escapeHtml(hit.snippet.slice(0, hit.matchStart))}<mark>${escapeHtml(hit.snippet.slice(hit.matchStart, hit.matchEnd))}</mark>${escapeHtml(hit.snippet.slice(hit.matchEnd))}</span></button>`).join('');
+  $('#search-results').querySelectorAll<HTMLButtonElement>('button').forEach(button => button.addEventListener('click', () => selectSearchHit(Number(button.dataset.index))));
   pages.querySelectorAll('.page-shell').forEach(shell => highlightVisibleText(shell as HTMLElement));
 }
 
@@ -520,7 +588,7 @@ mountThemeSwitch($('#theme-control'), dark => {
 $('#search-toggle').addEventListener('click', () => { setSidebar(true); showTab('search'); });
 let searchTimer: number | undefined;
 $<HTMLInputElement>('#search-input').addEventListener('input', () => { window.clearTimeout(searchTimer); searchTimer = window.setTimeout(searchDocument, 250); });
-$<HTMLInputElement>('#search-input').addEventListener('keydown', event => { if (event.key === 'Enter' && hits.length) goToPage(hits[0].page); if (event.key === 'Escape') showTab('pages'); });
+$<HTMLInputElement>('#search-input').addEventListener('keydown', event => { if (event.key === 'Enter' && hits.length) selectSearchHit(0); if (event.key === 'Escape') showTab('pages'); });
 viewer.addEventListener('scroll', () => {
   if (!pdf) return;
   const center = viewer.getBoundingClientRect().top + viewer.clientHeight * 0.32;
