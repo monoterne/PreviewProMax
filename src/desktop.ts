@@ -42,3 +42,5 @@ export function onOpenedDocument(callback: (file: OpenedDocument) => Promise<voi
   });
   return () => { disposed = true; unlisten?.(); };
 }
+
+export const windowReady = (dark: boolean) => invoke<void>('window_ready', { dark });

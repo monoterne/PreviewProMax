@@ -2,11 +2,14 @@ import * as pdfjs from 'pdfjs-dist';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import './style.css';
-import { pickDocumentPaths, readDocument, onOpenedDocument, onMenuAction, newWindow, closeWindow, type OpenedDocument } from './desktop';
+import { pickDocumentPaths, readDocument, onOpenedDocument, onMenuAction, newWindow, closeWindow, windowReady, type OpenedDocument } from './desktop';
 import { darkenOutsideImages } from './dark-page';
-import { mountSidebarTabs, mountThemeSwitch } from './radix-controls';
+import { mountSidebarTabs, mountThemeSwitch } from './controls';
 import { mountDocumentTabs } from './document-tabs';
-import { findOccurrences, type SearchHit } from './search';
+import { type SearchHit } from './search';
+import { searchPdf } from './pdf-search';
+import { renderOutline } from './outline';
+import type { SidebarTab } from './controls';
 
 // PDF.js uses recent Map methods that older system webviews may not provide.
 const mapPrototype = Map.prototype as Map<unknown, unknown> & {
@@ -108,10 +111,10 @@ app.innerHTML = `
 const $ = <T extends HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
 const viewer = $<HTMLElement>('#viewer');
 const pages = $<HTMLElement>('#pages');
-let activeTab: 'pages' | 'search' = 'pages';
-const sidebarTabs = mountSidebarTabs(document.querySelector<HTMLElement>('#sidebar-tabs-root')!, tab => {
+let activeTab: SidebarTab = 'pages';
+const sidebarTabs = mountSidebarTabs(document.querySelector<HTMLElement>('#sidebar-tabs-root')!, (tab, focusInput) => {
   activeTab = tab;
-  if (tab === 'search') queueMicrotask(() => $<HTMLInputElement>('#search-input').focus({ preventScroll: true }));
+  if (focusInput && tab === 'search') queueMicrotask(() => $<HTMLInputElement>('#search-input').focus({ preventScroll: true }));
 });
 const thumbs = $<HTMLElement>('#thumbnails');
 const pageNumber = $<HTMLInputElement>('#page-number');
@@ -127,6 +130,7 @@ let renderEpoch = 0;
 let thumbnailEpoch = 0;
 let navigationEpoch = 0;
 let searchEpoch = 0;
+let searchAbort: AbortController | undefined;
 let hits: SearchHit[] = [];
 let selectedHit: SearchHit | null = null;
 let activeSearchQuery = '';
@@ -139,13 +143,13 @@ let toastTimer: number | undefined;
 let pageObserver: IntersectionObserver | null = null;
 let thumbObserver: IntersectionObserver | null = null;
 const pageRenders = new WeakMap<HTMLElement, Promise<void>>();
-const renderedText = new WeakMap<HTMLElement, { divs: HTMLElement[]; strings: string[]; eols: boolean[] }>();
+const renderedText = new WeakMap<HTMLElement, { divs: HTMLElement[]; strings: string[] }>();
 
 type DocumentTab = {
   id: string; name: string; pdf: PdfDocument | null; page: number; zoom: number;
   rotation: number; fit: boolean; dimensions: Dimensions[]; top: number; left: number;
   query: string; activeQuery: string; searchPending: boolean; hits: SearchHit[]; selected: number;
-  sidebarTab: 'pages' | 'search'; thumbnailTop: number; resultsTop: number;
+  sidebarTab: SidebarTab; thumbnailTop: number; resultsTop: number;
 };
 let nextDocumentId = 1;
 function emptyDocumentTab(): DocumentTab {
@@ -171,9 +175,10 @@ function saveDocumentTab() {
 }
 function activateDocumentTab(id: string) {
   const tab = documentTabs.find(tab => tab.id === id);
-  if (!tab) return;
+  if (!tab || id === activeDocumentId) return;
   saveDocumentTab();
   const previousPdf = pdf;
+  searchAbort?.abort();
   searchEpoch++; navigationEpoch++; renderEpoch++; thumbnailEpoch++;
   window.clearTimeout(searchTimer);
   pageObserver?.disconnect(); thumbObserver?.disconnect();
@@ -185,7 +190,8 @@ function activateDocumentTab(id: string) {
   hits = tab.hits; activeSearchQuery = tab.activeQuery; searchRunning = false;
   selectedHitIndex = tab.selected; selectedHit = hits[selectedHitIndex] || null;
   $<HTMLInputElement>('#search-input').value = tab.query;
-  showTab(tab.sidebarTab);
+  showTab(tab.sidebarTab, false);
+  void renderOutline($('#outline'), pdf, page => goToPage(page));
   $('#welcome').hidden = !!pdf; pages.hidden = !pdf; $('#navigation').hidden = !pdf;
   $<HTMLButtonElement>('#sidebar-toggle').disabled = !pdf;
   document.querySelectorAll<HTMLElement>('.document-tool').forEach(el => el.hidden = !pdf);
@@ -196,7 +202,17 @@ function activateDocumentTab(id: string) {
   updateTitle();
   tabBar.update(documentTabs, id);
   renderSearchResults();
-  if (pdf) { rebuildPages(); makeThumbnails(); updatePageUi(); }
+  if (pdf) {
+    rebuildPages(); makeThumbnails(); updatePageUi();
+    // Reveal a tab as one frame once its target page is ready. This avoids
+    // showing mismatched page placeholders while sizes and text settle.
+    pages.style.visibility = 'hidden';
+    const epoch = renderEpoch;
+    const target = pages.querySelector<HTMLElement>(`.page-shell[data-page="${currentPage}"]`)!;
+    void renderPage(target, epoch).finally(() => {
+      if (epoch === renderEpoch) pages.style.visibility = '';
+    });
+  }
   viewer.scrollTo({ top: tab.top, left: tab.left, behavior: 'auto' });
   thumbs.scrollTop = tab.thumbnailTop;
   $('#search-results').scrollTop = tab.resultsTop;
@@ -249,10 +265,10 @@ function updateTitle() {
   $('#document-title').textContent = pdf ? displayName(documentName) : 'Preview Pro Max';
   document.title = pdf ? `${documentName} — Preview Pro Max` : 'Preview Pro Max';
 }
-function showTab(tab: 'pages' | 'search') {
+function showTab(tab: SidebarTab, focus = true) {
   activeTab = tab;
   sidebarTabs.setTab(tab);
-  if (tab === 'search') queueMicrotask(() => $<HTMLInputElement>('#search-input').focus({ preventScroll: true }));
+  if (focus && tab === 'search') queueMicrotask(() => $<HTMLInputElement>('#search-input').focus({ preventScroll: true }));
 }
 function setSidebar(visible: boolean) {
   const wasShown = !$('#sidebar').hidden;
@@ -334,6 +350,7 @@ function updatePageSizes() {
 }
 function rebuildPages() {
   if (!pdf) return;
+  pages.style.visibility = '';
   renderEpoch++;
   navigationEpoch++;
   pageObserver?.disconnect();
@@ -399,14 +416,13 @@ async function renderPageContent(shell: HTMLElement, epoch: number) {
     textLayer.style.setProperty('--scale-factor', String(viewport.scale));
     textLayer.style.setProperty('--total-scale-factor', String(viewport.scale * viewport.userUnit));
     try {
-      const content = await page.getTextContent();
+      const content = await page.getTextContent({ disableNormalization: true });
       const text = new pdfjs.TextLayer({ textContentSource: content, container: textLayer, viewport });
       await text.render();
       const divs = text.textDivs as HTMLElement[];
       renderedText.set(shell, {
         divs,
-        strings: text.textContentItemsStr,
-        eols: content.items.filter(item => 'str' in item).map(item => 'hasEOL' in item && item.hasEOL)
+        strings: text.textContentItemsStr
       });
     } catch { /* Image-only PDFs still render correctly. */ }
     if (epoch !== renderEpoch) return;
@@ -445,13 +461,12 @@ function highlightVisibleText(shell: HTMLElement) {
   if (!layer) return;
   const query = activeSearchQuery;
   const page = Number(shell.dataset.page);
-  const pageText = layer.strings.map((value, index) => value + (layer.eols[index] ? ' ' : '')).join('');
-  const matches = findOccurrences(pageText, query, page);
+  const matches = hits.filter(hit => hit.page === page);
   let itemStart = 0;
   layer.divs.forEach((span, index) => {
     const source = layer.strings[index];
     const itemEnd = itemStart + source.length;
-    if (!source || !query) { span.textContent = source; itemStart = itemEnd + (layer.eols[index] ? 1 : 0); return; }
+    if (!source || !query) { span.textContent = source; itemStart = itemEnd; return; }
     const content = document.createDocumentFragment();
     let from = 0;
     for (const hit of matches) {
@@ -470,7 +485,7 @@ function highlightVisibleText(shell: HTMLElement) {
     }
     content.append(document.createTextNode(source.slice(from)));
     span.replaceChildren(content);
-    itemStart = itemEnd + (layer.eols[index] ? 1 : 0);
+    itemStart = itemEnd;
   });
 }
 function scrollToSelectedMatch(shell: HTMLElement) {
@@ -662,7 +677,8 @@ async function searchDocument() {
   const sourcePdf = pdf;
   const query = $<HTMLInputElement>('#search-input').value.trim();
   const epoch = ++searchEpoch;
-  const nextHits: SearchHit[] = [];
+  searchAbort?.abort();
+  const abort = searchAbort = new AbortController();
   hits = [];
   selectedHit = null;
   selectedHitIndex = -1;
@@ -672,20 +688,18 @@ async function searchDocument() {
   pages.querySelectorAll<HTMLElement>('.page-shell').forEach(highlightVisibleText);
   if (!query) { $('#search-status').textContent = 'Enter text to search.'; return; }
   $('#search-status').textContent = 'Searching…';
-  for (let page = 1; page <= sourcePdf.numPages; page++) {
-    if (epoch !== searchEpoch) return;
-    try {
-      const content = await sourcePdf.getPage(page).then(p => p.getTextContent());
-      if (epoch !== searchEpoch || sourcePdf !== pdf) return;
-      const text = content.items.map(item => 'str' in item ? `${item.str}${item.hasEOL ? ' ' : ''}` : '').join('');
-      for (const hit of findOccurrences(text, query, page)) nextHits.push(hit);
-    } catch { /* Skip pages without readable text. */ }
-    if (page % 10 === 0) await new Promise(resolve => setTimeout(resolve, 0));
+  try {
+    const nextHits = await searchPdf(sourcePdf, query, abort.signal);
+    if (epoch !== searchEpoch || sourcePdf !== pdf) return;
+    hits = nextHits;
+    searchRunning = false;
+    renderSearchResults();
+  } catch (error) {
+    if (abort.signal.aborted || epoch !== searchEpoch) return;
+    searchRunning = false;
+    $('#search-status').textContent = 'Unable to search this document.';
+    console.error('PDF search failed:', error);
   }
-  if (epoch !== searchEpoch || sourcePdf !== pdf) return;
-  hits = nextHits;
-  searchRunning = false;
-  renderSearchResults();
 }
 function renderSearchResults() {
   updateSearchStatus();
@@ -740,6 +754,7 @@ $('#search-toggle').addEventListener('click', () => { setSidebar(true); showTab(
 let searchTimer: number | undefined;
 $<HTMLInputElement>('#search-input').addEventListener('input', () => {
   window.clearTimeout(searchTimer);
+  searchAbort?.abort();
   searchEpoch++;
   navigationEpoch++;
   hits = [];
@@ -815,3 +830,7 @@ void getCurrentWebview().onDragDropEvent(event => {
     });
   }
 }).catch(error => console.error('Unable to listen for file drops:', error));
+
+// Hidden native webviews may suspend animation frames. Reveal on the next task,
+// once controls and theme are initialized; the native background matches the UI.
+window.setTimeout(() => { void windowReady(darkMode).catch(console.error); }, 0);

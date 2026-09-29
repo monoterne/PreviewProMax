@@ -5,13 +5,17 @@ function fixture() {
   const objects = ['', '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'];
   const kids: number[] = [];
   for (let page = 1; page <= 24; page++) {
-    const content = `BT /F1 20 Tf 32 720 Td (Page ${page}) Tj 0 -40 Td (alpha target) Tj 0 -40 Td (beta target) Tj 0 -40 Td (split) Tj 0 -28 Td (target) Tj ET`;
+    const content = `BT /F1 20 Tf 32 720 Td (Page ${page}) Tj 0 -40 Td (alpha target) Tj 0 -40 Td (beta target) Tj 0 -40 Td (split) Tj 0 -28 Td (target) Tj 0 -40 Td (inter-) Tj 0 -28 Td (national) Tj ET`;
     const stream = objects.push(`<< /Length ${content.length} >>\nstream\n${content}\nendstream`) - 1;
     kids.push(objects.push(`<< /Type /Page /Parent 0 0 R /MediaBox [0 0 ${page % 2 ? 612 : 500} 792] /Resources << /Font << /F1 1 0 R >> >> /Contents ${stream} 0 R >>`) - 1);
   }
   const pages = objects.push(`<< /Type /Pages /Kids [${kids.map(n => `${n} 0 R`).join(' ')}] /Count ${kids.length} >>`) - 1;
   for (const kid of kids) objects[kid] = objects[kid].replace('/Parent 0 0 R', `/Parent ${pages} 0 R`);
-  const root = objects.push(`<< /Type /Catalog /Pages ${pages} 0 R >>`) - 1;
+  const outlineRoot = objects.length;
+  objects.push(`<< /Type /Outlines /First ${outlineRoot + 1} 0 R /Last ${outlineRoot + 1} 0 R /Count 2 >>`);
+  objects.push(`<< /Title (Chapter one) /Parent ${outlineRoot} 0 R /Dest [${kids[4]} 0 R /Fit] /First ${outlineRoot + 2} 0 R /Last ${outlineRoot + 2} 0 R /Count 1 >>`);
+  objects.push(`<< /Title (Section two) /Parent ${outlineRoot + 1} 0 R /Dest (section-two) >>`);
+  const root = objects.push(`<< /Type /Catalog /Pages ${pages} 0 R /Outlines ${outlineRoot} 0 R /Names << /Dests << /Names [(section-two) [${kids[11]} 0 R /Fit]] >> >> >>`) - 1;
   let data = '%PDF-1.4\n'; const offsets = [0];
   for (let i = 1; i < objects.length; i++) { offsets.push(data.length); data += `${i} 0 obj\n${objects[i]}\nendobj\n`; }
   const xref = data.length;
@@ -23,6 +27,8 @@ function fixture() {
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(bytes => {
+    // Exercise the compatibility path used by older system webviews.
+    (RegExp as any).escape = undefined;
     let consumed = false;
     Object.assign(window, {
       __TAURI_INTERNALS__: {
@@ -175,4 +181,40 @@ test('scrolling through a long document keeps retained page canvases bounded', a
     await expect(page.locator(`.page-shell[data-page="${number}"] canvas`)).toBeVisible();
     await expect.poll(() => page.locator('.page-shell canvas').count()).toBeLessThan(8);
   }
+});
+
+
+test('typing still lists and highlights matches after repeatedly switching sidebar views and documents', async ({ page }) => {
+  await page.locator('#open-button').click();
+  for (const name of ['find-fixture.pdf', 'third.pdf', 'second.pdf']) {
+    await page.getByRole('tab', { name, exact: true }).click();
+    await page.getByRole('tab', { name: 'Find', exact: true }).click();
+    await page.getByRole('tab', { name: 'Pages', exact: true }).click();
+    await page.getByRole('tab', { name: 'Find', exact: true }).click();
+    await page.locator('#search-input').pressSequentially('target', { delay: 30 });
+    await expect(page.locator('.search-result')).toHaveCount(72);
+    await expect(page.locator('.page-shell').first().locator('.search-match')).toHaveCount(3);
+  }
+});
+
+test('PDF.js finds words hyphenated across lines and highlights both source pieces', async ({ page }) => {
+  await page.getByRole('tab', { name: 'Find', exact: true }).click();
+  await page.locator('#search-input').fill('international');
+  await expect(page.locator('.search-result')).toHaveCount(24);
+  await page.locator('.search-result').first().click();
+  await expect(page.locator('.search-match.selected')).toHaveText(['inter-', 'national']);
+  await page.locator('#search-input').fill('no-such-word');
+  await expect(page.locator('#search-status')).toHaveText('No matches found');
+  await expect(page.locator('.search-match')).toHaveCount(0);
+});
+
+test('contents supports nested entries, named destinations, and keyboard toggles', async ({ page }) => {
+  await page.getByRole('tab', { name: 'Contents', exact: true }).click();
+  await page.getByRole('button', { name: 'Chapter one', exact: true }).click();
+  await expect(page.locator('#page-number')).toHaveValue('5');
+  await page.getByRole('button', { name: 'Collapse Chapter one' }).click();
+  await expect(page.getByRole('button', { name: 'Section two', exact: true })).toBeHidden();
+  await page.getByRole('button', { name: 'Expand Chapter one' }).press('Enter');
+  await page.getByRole('button', { name: 'Section two', exact: true }).click();
+  await expect(page.locator('#page-number')).toHaveValue('12');
 });

@@ -1,6 +1,6 @@
 [package]
 name = "preview-pro-max"
-version = "0.2.0"
+version = "0.2.1"
 description = "Desktop PDF viewer for macOS and Windows"
 repository = "https://github.com/monoterne/PreviewProMax"
 edition = "2024"

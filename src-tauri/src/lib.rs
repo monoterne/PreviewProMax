@@ -38,6 +38,20 @@ async fn new_window(app: tauri::AppHandle) -> Result<String, String> {
 }
 
 #[tauri::command]
+fn window_ready(window: WebviewWindow, dark: bool) -> Result<(), String> {
+    let color = if dark {
+        tauri::window::Color(31, 32, 35, 255)
+    } else {
+        tauri::window::Color(241, 242, 244, 255)
+    };
+    window
+        .set_background_color(Some(color))
+        .map_err(|e| e.to_string())?;
+    window.show().map_err(|e| e.to_string())?;
+    window.set_focus().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn close_window(window: WebviewWindow) -> Result<(), String> {
     window.close().map_err(|e| e.to_string())
 }
@@ -68,8 +82,9 @@ fn queue_document(app: &tauri::AppHandle, path: String) {
             .push_back(path);
     }
     let _ = app.emit_to(window.label(), "open-document-path", ());
-    let _ = window.show();
-    let _ = window.set_focus();
+    if window.is_visible().unwrap_or(false) {
+        let _ = window.set_focus();
+    }
 }
 
 #[tauri::command]
@@ -183,7 +198,8 @@ pub fn run() {
             read_document,
             take_pending_document,
             new_window,
-            close_window
+            close_window,
+            window_ready
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]

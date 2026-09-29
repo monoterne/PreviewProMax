@@ -1,11 +1,11 @@
 # Preview Pro Max
 
-A desktop PDF viewer for macOS and Windows. The interface uses Bun, TypeScript, React, Radix UI, and Mozilla PDF.js; Tauri supplies the native window and file picker. The finished app uses the operating system webview and includes no Node or Bun runtime.
+A desktop PDF viewer for macOS and Windows. The interface uses Bun, TypeScript, Tailwind CSS, and Mozilla PDF.js; Tauri supplies the native window and file picker. The finished app uses the operating system webview and includes no Node or Bun runtime.
 
 ## Features
 
 - Open PDFs, including password protected PDFs, from the file picker, drag and drop, or the operating system's PDF file association; unsupported files show a clear error
-- Page thumbnails, page navigation, zoom, fit width, and rotation
+- Page thumbnails, nested table of contents, page navigation, zoom, fit width, and rotation
 - Find every occurrence of readable text and select a result
 - Light and dark mode for the app, PDF pages, and thumbnails, with an option to keep embedded image colors in dark mode
 - Lazy rendering with offscreen canvas eviction and a page raster limit

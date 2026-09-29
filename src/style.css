@@ -1,3 +1,5 @@
+@import "tailwindcss/theme.css";
+@import "tailwindcss/utilities.css";
 :root {
   font-family: -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
   font-size: 13px;
@@ -178,3 +180,9 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
   .sidebar { width: 188px; }
   .pages { padding-inline: 20px; }
 }
+
+.outline-row { display: flex; align-items: baseline; min-width: 0; }
+.outline-link { flex: 1; min-width: 0; border: 0; border-radius: 4px; padding: 8px; text-align: left; overflow-wrap: anywhere; color: var(--text); background: transparent; }
+.outline-link:hover { background: var(--surface-hover); }
+.outline-toggle { width: 24px; flex: none; border: 0; background: transparent; color: var(--muted); }
+.viewer { overflow-anchor: none; }

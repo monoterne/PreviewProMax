@@ -10,12 +10,10 @@
       "DOM"
     ],
     "skipLibCheck": true,
-    "allowSyntheticDefaultImports": true,
-    "jsx": "react-jsx"
+    "allowSyntheticDefaultImports": true
   },
   "include": [
     "src/**/*.ts",
-    "vite.config.ts",
-    "src/**/*.tsx"
+    "vite.config.ts"
   ]
 }
