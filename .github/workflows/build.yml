@@ -14,9 +14,11 @@ jobs:
           - os: macos-latest
             target: mac
             bundles: app
+            browser: webkit
           - os: windows-latest
             target: win
             bundles: nsis
+            browser: chromium
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -25,6 +27,8 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
       - run: bun test
+      - run: bunx playwright install ${{ matrix.browser }}
+      - run: bun run test:ui --project=${{ matrix.browser }}
       - run: bun tauri build --bundles ${{ matrix.bundles }}
       - name: Prepare downloads
         shell: bash

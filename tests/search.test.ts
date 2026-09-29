@@ -17,3 +17,8 @@ test('keeps source offsets for matches across PDF text chunks and line breaks', 
   expect(hits.map(hit => text.slice(hit.start, hit.end))).toEqual(['search\n  target', 'search target']);
   expect(hits.map(hit => hit.snippet.slice(hit.matchStart, hit.matchEnd))).toEqual(['search target', 'search target']);
 });
+
+test('treats punctuation literally and keeps offsets after Unicode text', () => {
+  const text = 'İ before (a+b) and (A+B)';
+  expect(findOccurrences(text, '(a+b)', 1).map(hit => text.slice(hit.start, hit.end))).toEqual(['(a+b)', '(A+B)']);
+});

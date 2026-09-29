@@ -2,9 +2,10 @@ import * as pdfjs from 'pdfjs-dist';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import './style.css';
-import { pickDocumentFile, readDocument, onOpenedDocument, type OpenedDocument } from './desktop';
+import { pickDocumentPaths, readDocument, onOpenedDocument, onMenuAction, newWindow, closeWindow, type OpenedDocument } from './desktop';
 import { darkenOutsideImages } from './dark-page';
 import { mountSidebarTabs, mountThemeSwitch } from './radix-controls';
+import { mountDocumentTabs } from './document-tabs';
 import { findOccurrences, type SearchHit } from './search';
 
 // PDF.js uses recent Map methods that older system webviews may not provide.
@@ -28,6 +29,7 @@ type Dimensions = { width: number; height: number };
 
 const paths: Record<string, string> = {
   file: '<path d="M7 2.75h6l4.25 4.25V20a1.25 1.25 0 0 1-1.25 1.25H7A1.25 1.25 0 0 1 5.75 20V4A1.25 1.25 0 0 1 7 2.75Z"/><path d="M13 3v4.5h4.25M8.5 12h6M8.5 15.5h6"/>',
+  window: '<rect x="7" y="7" width="14" height="14" rx="2"/><path d="M16 7V4a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h3"/>',
   folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/>',
   panel: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/>',
   search: '<circle cx="10.8" cy="10.8" r="6.2"/><path d="m15.5 15.5 5 5"/>',
@@ -45,8 +47,10 @@ function releaseCanvases(root: Element) {
 }
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
-document.documentElement.dataset.theme = 'light';
-document.documentElement.dataset.invertImages = 'true';
+const systemTheme = window.matchMedia('(prefers-color-scheme: dark)');
+const savedInvertImages = localStorage.getItem('invert-images') !== 'false';
+document.documentElement.dataset.theme = systemTheme.matches ? 'dark' : 'light';
+document.documentElement.dataset.invertImages = String(savedInvertImages);
 app.innerHTML = `
   <header class="toolbar">
     <div class="toolbar-left">
@@ -72,9 +76,10 @@ app.innerHTML = `
       <button id="open-button" class="open-button">${icon('folder', 16)}<span>Open</span></button>
     </div>
   </header>
+  <div class="document-bar"><div id="document-tabs-root"></div><button id="new-window" class="icon-button" aria-label="New window" title="New window (⌘/Ctrl+N)">${icon('window')}</button></div>
   <div class="workspace">
     <aside class="sidebar" id="sidebar" hidden><div id="sidebar-tabs-root"></div></aside>
-    <main id="viewer" class="viewer">
+    <main id="viewer" class="viewer" role="tabpanel">
       <div id="welcome" class="welcome">
         <div class="empty-icon">${icon('file', 24)}</div>
         <h1>Open a PDF</h1>
@@ -106,7 +111,7 @@ const pages = $<HTMLElement>('#pages');
 let activeTab: 'pages' | 'search' = 'pages';
 const sidebarTabs = mountSidebarTabs(document.querySelector<HTMLElement>('#sidebar-tabs-root')!, tab => {
   activeTab = tab;
-  if (tab === 'search') queueMicrotask(() => $<HTMLInputElement>('#search-input').focus());
+  if (tab === 'search') queueMicrotask(() => $<HTMLInputElement>('#search-input').focus({ preventScroll: true }));
 });
 const thumbs = $<HTMLElement>('#thumbnails');
 const pageNumber = $<HTMLInputElement>('#page-number');
@@ -119,17 +124,105 @@ let rotation = 0;
 let sidebarVisible = true;
 let dimensions: Dimensions[] = [];
 let renderEpoch = 0;
+let thumbnailEpoch = 0;
 let navigationEpoch = 0;
 let searchEpoch = 0;
 let hits: SearchHit[] = [];
 let selectedHit: SearchHit | null = null;
-let pendingHitNavigation: SearchHit | null = null;
-let darkMode = false;
-let invertImages = true;
+let activeSearchQuery = '';
+let searchRunning = false;
+let selectedHitIndex = -1;
+let darkMode = systemTheme.matches;
+let invertImages = savedInvertImages;
+let manualTheme = false;
 let toastTimer: number | undefined;
 let pageObserver: IntersectionObserver | null = null;
 let thumbObserver: IntersectionObserver | null = null;
+const pageRenders = new WeakMap<HTMLElement, Promise<void>>();
 const renderedText = new WeakMap<HTMLElement, { divs: HTMLElement[]; strings: string[]; eols: boolean[] }>();
+
+type DocumentTab = {
+  id: string; name: string; pdf: PdfDocument | null; page: number; zoom: number;
+  rotation: number; fit: boolean; dimensions: Dimensions[]; top: number; left: number;
+  query: string; activeQuery: string; searchPending: boolean; hits: SearchHit[]; selected: number;
+  sidebarTab: 'pages' | 'search'; thumbnailTop: number; resultsTop: number;
+};
+let nextDocumentId = 1;
+function emptyDocumentTab(): DocumentTab {
+  return { id: String(nextDocumentId++), name: 'New tab', pdf: null, page: 1, zoom: 1.25,
+    rotation: 0, fit: true, dimensions: [], top: 0, left: 0, query: '', activeQuery: '',
+    searchPending: false, hits: [], selected: -1, sidebarTab: 'pages', thumbnailTop: 0, resultsTop: 0 };
+}
+const documentTabs: DocumentTab[] = [emptyDocumentTab()];
+let activeDocumentId = documentTabs[0].id;
+let tabBar: ReturnType<typeof mountDocumentTabs>;
+const renderJobs = new Set<Promise<void>>();
+let sharedWorker: pdfjs.PDFWorker | undefined;
+let openQueue = Promise.resolve();
+
+function saveDocumentTab() {
+  const tab = documentTabs.find(tab => tab.id === activeDocumentId);
+  if (!tab) return;
+  Object.assign(tab, { pdf, name: pdf ? documentName : 'New tab', page: currentPage, zoom,
+    rotation, fit: fitWidth, dimensions, top: viewer.scrollTop, left: viewer.scrollLeft,
+    query: $<HTMLInputElement>('#search-input').value, activeQuery: activeSearchQuery,
+    hits, searchPending: searchRunning, selected: selectedHitIndex, sidebarTab: activeTab,
+    thumbnailTop: thumbs.scrollTop, resultsTop: $('#search-results').scrollTop });
+}
+function activateDocumentTab(id: string) {
+  const tab = documentTabs.find(tab => tab.id === id);
+  if (!tab) return;
+  saveDocumentTab();
+  const previousPdf = pdf;
+  searchEpoch++; navigationEpoch++; renderEpoch++; thumbnailEpoch++;
+  window.clearTimeout(searchTimer);
+  pageObserver?.disconnect(); thumbObserver?.disconnect();
+  releaseCanvases(pages); releaseCanvases(thumbs);
+  pages.replaceChildren(); thumbs.replaceChildren();
+  activeDocumentId = id;
+  pdf = tab.pdf; documentName = tab.name; currentPage = tab.page;
+  zoom = tab.zoom; rotation = tab.rotation; fitWidth = tab.fit; dimensions = tab.dimensions;
+  hits = tab.hits; activeSearchQuery = tab.activeQuery; searchRunning = false;
+  selectedHitIndex = tab.selected; selectedHit = hits[selectedHitIndex] || null;
+  $<HTMLInputElement>('#search-input').value = tab.query;
+  showTab(tab.sidebarTab);
+  $('#welcome').hidden = !!pdf; pages.hidden = !pdf; $('#navigation').hidden = !pdf;
+  $<HTMLButtonElement>('#sidebar-toggle').disabled = !pdf;
+  document.querySelectorAll<HTMLElement>('.document-tool').forEach(el => el.hidden = !pdf);
+  setSidebar(sidebarVisible);
+  if (pdf && fitWidth) zoom = Math.max(0.4, Math.min(3, Math.round(scaleForFit() * 20) / 20));
+  zoomLabel.textContent = `${Math.round(zoom * 100)}%`;
+  $('#fit-width').classList.toggle('selected', fitWidth);
+  updateTitle();
+  tabBar.update(documentTabs, id);
+  renderSearchResults();
+  if (pdf) { rebuildPages(); makeThumbnails(); updatePageUi(); }
+  viewer.scrollTo({ top: tab.top, left: tab.left, behavior: 'auto' });
+  thumbs.scrollTop = tab.thumbnailTop;
+  $('#search-results').scrollTop = tab.resultsTop;
+  if (pdf && tab.query && (tab.searchPending || tab.query !== tab.activeQuery)) void searchDocument();
+  if (previousPdf && previousPdf !== pdf) {
+    void Promise.allSettled([...renderJobs]).then(() => {
+      if (pdf !== previousPdf && documentTabs.some(item => item.pdf === previousPdf)) {
+        void previousPdf.cleanup().catch(() => {});
+      }
+    });
+  }
+}
+function newDocumentTab() {
+  const tab = emptyDocumentTab();
+  documentTabs.push(tab);
+  activateDocumentTab(tab.id);
+}
+async function closeDocumentTab(id: string) {
+  const index = documentTabs.findIndex(tab => tab.id === id);
+  if (index < 0) return;
+  if (documentTabs.length === 1) { await closeWindow(); return; }
+  const [closed] = documentTabs.splice(index, 1);
+  if (activeDocumentId === id) activateDocumentTab(documentTabs[Math.min(index, documentTabs.length - 1)].id);
+  else tabBar.update(documentTabs, activeDocumentId);
+  if (closed.pdf) { await Promise.allSettled([...renderJobs]); await closed.pdf.destroy(); }
+}
 
 function toast(message: string, duration = 3500) {
   const el = $('#toast');
@@ -159,7 +252,7 @@ function updateTitle() {
 function showTab(tab: 'pages' | 'search') {
   activeTab = tab;
   sidebarTabs.setTab(tab);
-  if (tab === 'search') queueMicrotask(() => $<HTMLInputElement>('#search-input').focus());
+  if (tab === 'search') queueMicrotask(() => $<HTMLInputElement>('#search-input').focus({ preventScroll: true }));
 }
 function setSidebar(visible: boolean) {
   const wasShown = !$('#sidebar').hidden;
@@ -242,6 +335,7 @@ function updatePageSizes() {
 function rebuildPages() {
   if (!pdf) return;
   renderEpoch++;
+  navigationEpoch++;
   pageObserver?.disconnect();
   releaseCanvases(pages);
   pages.innerHTML = '';
@@ -254,12 +348,22 @@ function rebuildPages() {
     pages.appendChild(shell);
   }
   updatePageSizes();
+  const epoch = renderEpoch;
   pageObserver = new IntersectionObserver(entries => {
-    for (const entry of entries) if (entry.isIntersecting) renderPage(entry.target as HTMLElement, renderEpoch);
+    for (const entry of entries) if (entry.isIntersecting) renderPage(entry.target as HTMLElement, epoch);
   }, { root: viewer, rootMargin: '700px 0px' });
   pages.querySelectorAll('.page-shell').forEach(el => pageObserver!.observe(el));
 }
-async function renderPage(shell: HTMLElement, epoch: number) {
+function renderPage(shell: HTMLElement, epoch: number): Promise<void> {
+  if (epoch !== renderEpoch || shell.parentElement !== pages) return Promise.resolve();
+  const pending = pageRenders.get(shell);
+  if (pending) return pending;
+  const task = renderPageContent(shell, epoch).finally(() => { pageRenders.delete(shell); renderJobs.delete(task); });
+  renderJobs.add(task);
+  pageRenders.set(shell, task);
+  return task;
+}
+async function renderPageContent(shell: HTMLElement, epoch: number) {
   if (!pdf || shell.dataset.rendering === 'true' || shell.dataset.rendered === 'true') return;
   shell.dataset.rendering = 'true';
   const number = Number(shell.dataset.page);
@@ -273,7 +377,7 @@ async function renderPage(shell: HTMLElement, epoch: number) {
       shell.style.width = `${d.width * zoom}px`;
       shell.style.height = `${d.height * zoom}px`;
     }
-    const viewport = page.getViewport({ scale: zoom, rotation });
+    const viewport = page.getViewport({ scale: zoom, rotation: (page.rotate + rotation) % 360 });
     const ratio = Math.min(window.devicePixelRatio || 1, 2, Math.sqrt(8_000_000 / (viewport.width * viewport.height)));
     const canvas = document.createElement('canvas');
     canvas.width = Math.floor(viewport.width * ratio);
@@ -293,14 +397,16 @@ async function renderPage(shell: HTMLElement, epoch: number) {
     const textLayer = document.createElement('div');
     textLayer.className = 'textLayer';
     textLayer.style.setProperty('--scale-factor', String(viewport.scale));
+    textLayer.style.setProperty('--total-scale-factor', String(viewport.scale * viewport.userUnit));
     try {
-      const text = new pdfjs.TextLayer({ textContentSource: page.streamTextContent(), container: textLayer, viewport });
+      const content = await page.getTextContent();
+      const text = new pdfjs.TextLayer({ textContentSource: content, container: textLayer, viewport });
       await text.render();
       const divs = text.textDivs as HTMLElement[];
       renderedText.set(shell, {
         divs,
         strings: text.textContentItemsStr,
-        eols: divs.map(div => div.nextElementSibling?.tagName === 'BR')
+        eols: content.items.filter(item => 'str' in item).map(item => 'hasEOL' in item && item.hasEOL)
       });
     } catch { /* Image-only PDFs still render correctly. */ }
     if (epoch !== renderEpoch) return;
@@ -308,7 +414,6 @@ async function renderPage(shell: HTMLElement, epoch: number) {
     shell.prepend(canvas, textLayer);
     shell.dataset.rendered = 'true';
     highlightVisibleText(shell);
-    if (pendingHitNavigation?.page === number && scrollToSelectedMatch(shell)) pendingHitNavigation = null;
   } catch (error) {
     if (epoch === renderEpoch) shell.querySelector('.page-loading')!.textContent = 'Unable to render this page';
     console.error(error);
@@ -338,7 +443,7 @@ function trimRenderedPages() {
 function highlightVisibleText(shell: HTMLElement) {
   const layer = renderedText.get(shell);
   if (!layer) return;
-  const query = $<HTMLInputElement>('#search-input').value.trim();
+  const query = activeSearchQuery;
   const page = Number(shell.dataset.page);
   const pageText = layer.strings.map((value, index) => value + (layer.eols[index] ? ' ' : '')).join('');
   const matches = findOccurrences(pageText, query, page);
@@ -376,18 +481,46 @@ function scrollToSelectedMatch(shell: HTMLElement) {
   viewer.scrollTo({ top: viewer.scrollTop + offset - viewer.clientHeight * 0.32, behavior: 'auto' });
   return true;
 }
-function selectSearchHit(index: number) {
+function updateSearchStatus() {
+  $('#search-status').textContent = hits.length
+    ? selectedHitIndex >= 0 ? `${selectedHitIndex + 1} of ${hits.length} matches` : `${hits.length} ${hits.length === 1 ? 'match' : 'matches'}`
+    : activeSearchQuery ? 'No matches found' : 'Enter text to search.';
+  $<HTMLButtonElement>('#previous-match').disabled = !hits.length;
+  $<HTMLButtonElement>('#next-match').disabled = !hits.length;
+}
+async function selectSearchHit(index: number) {
   const hit = hits[index];
   if (!hit) return;
+  const epoch = ++navigationEpoch;
   selectedHit = hit;
-  pendingHitNavigation = hit;
+  selectedHitIndex = index;
+  pages.querySelectorAll('.search-match.selected').forEach(mark => mark.classList.remove('selected'));
   $('#search-results').querySelectorAll<HTMLElement>('.search-result').forEach((result, resultIndex) => {
     result.classList.toggle('active', resultIndex === index);
+    result.setAttribute('aria-current', String(resultIndex === index));
   });
+  updateSearchStatus();
+  const list = $('#search-results');
+  const button = list.querySelector<HTMLElement>('.active');
+  if (button) {
+    const rect = button.getBoundingClientRect(), bounds = list.getBoundingClientRect();
+    if (rect.top < bounds.top) list.scrollTop += rect.top - bounds.top;
+    else if (rect.bottom > bounds.bottom) list.scrollTop += rect.bottom - bounds.bottom;
+  }
   const shell = pages.querySelector<HTMLElement>(`.page-shell[data-page="${hit.page}"]`);
-  if (shell) highlightVisibleText(shell);
-  if (shell?.dataset.rendered === 'true' && scrollToSelectedMatch(shell)) pendingHitNavigation = null;
-  else goToPage(hit.page);
+  if (!shell) return;
+  await renderPage(shell, renderEpoch);
+  if (epoch !== navigationEpoch || selectedHit !== hit) return;
+  highlightVisibleText(shell);
+  currentPage = hit.page;
+  updatePageUi();
+  if (!scrollToSelectedMatch(shell)) await goToPage(hit.page);
+}
+function moveSearchHit(direction: number) {
+  if (!hits.length) return;
+  const index = selectedHitIndex < 0 ? (direction > 0 ? 0 : hits.length - 1)
+    : (selectedHitIndex + direction + hits.length) % hits.length;
+  void selectSearchHit(index);
 }
 function thumbnailSize(d: Dimensions): Dimensions {
   const scale = Math.min(124 / d.width, 170 / d.height);
@@ -402,6 +535,7 @@ function setThumbnailSize(button: HTMLElement, d: Dimensions): Dimensions {
 }
 function makeThumbnails() {
   if (!pdf) return;
+  thumbnailEpoch++;
   thumbObserver?.disconnect();
   releaseCanvases(thumbs);
   thumbs.innerHTML = '';
@@ -414,12 +548,14 @@ function makeThumbnails() {
     button.addEventListener('click', () => goToPage(i));
     thumbs.appendChild(button);
   }
+  const epoch = thumbnailEpoch;
   thumbObserver = new IntersectionObserver(entries => {
+    if (epoch !== thumbnailEpoch) return;
     for (const entry of entries) {
       const button = entry.target as HTMLElement;
       button.dataset.visible = String(entry.isIntersecting);
-      if (entry.isIntersecting) renderThumbnail(button, renderEpoch);
-      else if (button.dataset.rendered === 'true') {
+      if (entry.isIntersecting) renderThumbnail(button, epoch);
+      else if (thumbs.clientHeight > 0 && button.dataset.rendered === 'true') {
         releaseCanvases(button);
         const placeholder = document.createElement('span');
         placeholder.className = 'thumbnail-placeholder';
@@ -432,16 +568,22 @@ function makeThumbnails() {
   $('#thumb-count').textContent = `${pdf.numPages} ${pdf.numPages === 1 ? 'page' : 'pages'}`;
   updatePageUi();
 }
-async function renderThumbnail(button: HTMLElement, epoch: number) {
+function renderThumbnail(button: HTMLElement, epoch: number): Promise<void> {
+  if (epoch !== thumbnailEpoch || button.parentElement !== thumbs) return Promise.resolve();
+  const task = renderThumbnailContent(button, epoch).finally(() => renderJobs.delete(task));
+  renderJobs.add(task);
+  return task;
+}
+async function renderThumbnailContent(button: HTMLElement, epoch: number) {
   if (!pdf || button.dataset.rendered) return;
   button.dataset.rendered = 'loading';
   try {
     const sourcePdf = pdf;
     const page = await pdf.getPage(Number(button.dataset.page));
-    if (pdf !== sourcePdf || epoch !== renderEpoch) return;
-    const natural = page.getViewport({ scale: 1, rotation });
+    if (pdf !== sourcePdf || epoch !== thumbnailEpoch) return;
+    const natural = page.getViewport({ scale: 1, rotation: (page.rotate + rotation) % 360 });
     const size = setThumbnailSize(button, { width: natural.width, height: natural.height });
-    const viewport = page.getViewport({ scale: size.width / natural.width, rotation });
+    const viewport = page.getViewport({ scale: size.width / natural.width, rotation: (page.rotate + rotation) % 360 });
     const canvas = document.createElement('canvas');
     canvas.width = Math.ceil(viewport.width * 1.5);
     canvas.height = Math.ceil(viewport.height * 1.5);
@@ -450,7 +592,7 @@ async function renderThumbnail(button: HTMLElement, epoch: number) {
     const preserveImages = darkMode && !invertImages;
     if (preserveImages) page.imageCoordinates = null;
     await page.render({ canvasContext: canvas.getContext('2d')!, canvas, viewport, transform: [1.5, 0, 0, 1.5, 0, 0], recordImages: preserveImages }).promise;
-    if (pdf !== sourcePdf || epoch !== renderEpoch || button.dataset.visible !== 'true') return;
+    if (pdf !== sourcePdf || epoch !== thumbnailEpoch || button.dataset.visible !== 'true') return;
     if (preserveImages) {
       try { darkenOutsideImages(canvas, page.imageCoordinates); }
       catch (error) { canvas.classList.add('dark-filter-fallback'); console.error('Unable to preserve thumbnail image colors:', error); }
@@ -460,9 +602,15 @@ async function renderThumbnail(button: HTMLElement, epoch: number) {
   } catch { /* Keep the placeholder until the page is visible again. */ }
   finally { if (button.dataset.rendered === 'loading') button.dataset.rendered = ''; }
 }
-async function openDocument(file: OpenedDocument) {
+function openDocument(file: OpenedDocument): Promise<void> {
+  const pending = openQueue.then(() => loadDocument(file));
+  openQueue = pending.catch(error => toast(String(error)));
+  return pending;
+}
+async function loadDocument(file: OpenedDocument) {
   const bytes = file.bytes instanceof Uint8Array ? file.bytes : new Uint8Array(file.bytes);
-  const task = pdfjs.getDocument({ data: bytes, useSystemFonts: true });
+  sharedWorker ??= new pdfjs.PDFWorker();
+  const task = pdfjs.getDocument({ data: bytes, useSystemFonts: true, worker: sharedWorker });
   let passwordCanceled = false;
   task.onPassword = (updatePassword: (password: string) => void, reason: number) => {
     void requestPassword(reason === pdfjs.PasswordResponses.INCORRECT_PASSWORD).then(password => {
@@ -484,55 +632,31 @@ async function openDocument(file: OpenedDocument) {
     return;
   }
   try {
-    searchEpoch++;
-    renderEpoch++;
-    navigationEpoch++;
-    pageObserver?.disconnect();
-    thumbObserver?.disconnect();
-    await pdf?.destroy();
-    pdf = null;
-    $('#welcome').hidden = false;
-    pages.hidden = true;
-    pdf = loaded;
-    documentName = file.name;
-    currentPage = 1;
-    rotation = 0;
-    dimensions = [];
     const first = await loaded.getPage(1);
     const viewport = first.getViewport({ scale: 1 });
-    dimensions[0] = { width: viewport.width, height: viewport.height };
-    zoom = scaleForFit();
-    fitWidth = true;
-    zoomLabel.textContent = `${Math.round(zoom * 100)}%`;
-    $('#fit-width').classList.add('selected');
-    updateTitle();
-    $('#welcome').hidden = true;
-    pages.hidden = false;
-    $('#navigation').hidden = false;
-    $<HTMLButtonElement>('#sidebar-toggle').disabled = false;
-    document.querySelectorAll<HTMLElement>('.document-tool').forEach(el => el.hidden = false);
-    setSidebar(sidebarVisible);
-    $<HTMLInputElement>('#search-input').value = '';
-    hits = [];
-    selectedHit = null;
-    pendingHitNavigation = null;
-    $('#search-results').innerHTML = '';
-    $('#search-status').textContent = 'Enter text to search.';
-    rebuildPages();
-    makeThumbnails();
-    viewer.scrollTop = 0;
-    updatePageUi();
+    const tab = emptyDocumentTab();
+    tab.pdf = loaded;
+    tab.name = file.name;
+    tab.dimensions = [{ width: viewport.width, height: viewport.height }];
+    // Reuse an empty tab; opening another document keeps the current PDF available.
+    if (!pdf) {
+      const index = documentTabs.findIndex(item => item.id === activeDocumentId);
+      saveDocumentTab();
+      documentTabs.splice(index, 1, tab);
+    } else documentTabs.push(tab);
+    activateDocumentTab(tab.id);
   } catch (error) {
+    await loaded.destroy();
     console.error(error);
     toast(error instanceof Error ? error.message : 'Unable to open PDF.');
   }
 }
 async function pickDocument() {
   try {
-    const document = await pickDocumentFile();
-    if (document) await openDocument(document);
+    for (const path of await pickDocumentPaths()) await openDocument(await readDocument(path));
   } catch (error) { toast(error instanceof Error ? error.message : 'Unable to open file.'); }
 }
+
 async function searchDocument() {
   if (!pdf) return;
   const sourcePdf = pdf;
@@ -541,7 +665,9 @@ async function searchDocument() {
   const nextHits: SearchHit[] = [];
   hits = [];
   selectedHit = null;
-  pendingHitNavigation = null;
+  selectedHitIndex = -1;
+  activeSearchQuery = query;
+  searchRunning = !!query;
   $('#search-results').innerHTML = '';
   pages.querySelectorAll<HTMLElement>('.page-shell').forEach(highlightVisibleText);
   if (!query) { $('#search-status').textContent = 'Enter text to search.'; return; }
@@ -558,8 +684,12 @@ async function searchDocument() {
   }
   if (epoch !== searchEpoch || sourcePdf !== pdf) return;
   hits = nextHits;
-  $('#search-status').textContent = hits.length ? `${hits.length} ${hits.length === 1 ? 'match' : 'matches'} found` : 'No matches found';
-  $('#search-results').innerHTML = hits.map((hit, index) => `<button class="search-result" type="button" data-index="${index}"><span class="search-result-location">Page ${hit.page} · match ${hit.occurrence}</span><span class="search-snippet">${escapeHtml(hit.snippet.slice(0, hit.matchStart))}<mark>${escapeHtml(hit.snippet.slice(hit.matchStart, hit.matchEnd))}</mark>${escapeHtml(hit.snippet.slice(hit.matchEnd))}</span></button>`).join('');
+  searchRunning = false;
+  renderSearchResults();
+}
+function renderSearchResults() {
+  updateSearchStatus();
+  $('#search-results').innerHTML = hits.map((hit, index) => `<button class="search-result${index === selectedHitIndex ? ' active' : ''}" type="button" aria-current="${index === selectedHitIndex}" data-index="${index}"><span class="search-result-location">Page ${hit.page} · match ${hit.occurrence}</span><span class="search-snippet">${escapeHtml(hit.snippet.slice(0, hit.matchStart))}<mark>${escapeHtml(hit.snippet.slice(hit.matchStart, hit.matchEnd))}</mark>${escapeHtml(hit.snippet.slice(hit.matchEnd))}</span></button>`).join('');
   $('#search-results').querySelectorAll<HTMLButtonElement>('button').forEach(button => button.addEventListener('click', () => selectSearchHit(Number(button.dataset.index))));
   pages.querySelectorAll('.page-shell').forEach(shell => highlightVisibleText(shell as HTMLElement));
 }
@@ -575,27 +705,63 @@ $('#zoom-in').addEventListener('click', () => setZoom(zoom + 0.15));
 $('#zoom-out').addEventListener('click', () => setZoom(zoom - 0.15));
 $('#fit-width').addEventListener('click', () => setZoom(scaleForFit(), true));
 $('#rotate').addEventListener('click', () => { rotation = (rotation + 90) % 360; if (fitWidth) zoom = scaleForFit(); rebuildPages(); makeThumbnails(); zoomLabel.textContent = `${Math.round(zoom * 100)}%`; });
-mountThemeSwitch($('#theme-control'), dark => {
+function applyDarkMode(dark: boolean) {
   const wasPreservingImages = darkMode && !invertImages;
   darkMode = dark;
   document.documentElement.dataset.theme = dark ? 'dark' : 'light';
   if (pdf && (wasPreservingImages || (dark && !invertImages))) { rebuildPages(); makeThumbnails(); }
-}, invert => {
+}
+function applyInvertImages(invert: boolean) {
+  if (invert === invertImages) return;
   invertImages = invert;
   document.documentElement.dataset.invertImages = String(invert);
   if (pdf && darkMode) { rebuildPages(); makeThumbnails(); }
+}
+const themeControls = mountThemeSwitch($('#theme-control'), { dark: darkMode, invertImages }, dark => {
+  manualTheme = true;
+  applyDarkMode(dark);
+}, invert => {
+  localStorage.setItem('invert-images', String(invert));
+  applyInvertImages(invert);
 });
+systemTheme.addEventListener('change', event => {
+  if (!manualTheme) { applyDarkMode(event.matches); themeControls.setDark(event.matches); }
+});
+window.addEventListener('storage', event => {
+  if (event.key === 'invert-images') {
+    const invert = event.newValue !== 'false';
+    applyInvertImages(invert); themeControls.setInvert(invert);
+  }
+});
+tabBar = mountDocumentTabs($('#document-tabs-root'), activateDocumentTab, id => { void closeDocumentTab(id); }, newDocumentTab);
+tabBar.update(documentTabs, activeDocumentId);
+$('#new-window').addEventListener('click', () => { void newWindow().catch(error => toast(String(error))); });
 $('#search-toggle').addEventListener('click', () => { setSidebar(true); showTab('search'); });
 let searchTimer: number | undefined;
-$<HTMLInputElement>('#search-input').addEventListener('input', () => { window.clearTimeout(searchTimer); searchTimer = window.setTimeout(searchDocument, 250); });
-$<HTMLInputElement>('#search-input').addEventListener('keydown', event => { if (event.key === 'Enter' && hits.length) selectSearchHit(0); if (event.key === 'Escape') showTab('pages'); });
+$<HTMLInputElement>('#search-input').addEventListener('input', () => {
+  window.clearTimeout(searchTimer);
+  searchEpoch++;
+  navigationEpoch++;
+  hits = [];
+  selectedHit = null;
+  selectedHitIndex = -1;
+  activeSearchQuery = '';
+  searchRunning = false;
+  $('#search-results').replaceChildren();
+  updateSearchStatus();
+  pages.querySelectorAll<HTMLElement>('.page-shell').forEach(highlightVisibleText);
+  searchTimer = window.setTimeout(searchDocument, 150);
+});
+$('#previous-match').addEventListener('click', () => moveSearchHit(-1));
+$('#next-match').addEventListener('click', () => moveSearchHit(1));
+$<HTMLInputElement>('#search-input').addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); moveSearchHit(event.shiftKey ? -1 : 1); } if (event.key === 'Escape') showTab('pages'); });
 viewer.addEventListener('scroll', () => {
   if (!pdf) return;
   const center = viewer.getBoundingClientRect().top + viewer.clientHeight * 0.32;
   let nearest = currentPage, distance = Infinity;
   pages.querySelectorAll<HTMLElement>('.page-shell').forEach(shell => {
     const rect = shell.getBoundingClientRect();
-    const gap = Math.abs(rect.top + Math.min(rect.height * 0.35, 180) - center);
+    const gap = Math.max(rect.top - center, center - rect.bottom, 0);
     if (gap < distance) { distance = gap; nearest = Number(shell.dataset.page); }
   });
   if (nearest !== currentPage) { currentPage = nearest; updatePageUi(); }
@@ -603,14 +769,29 @@ viewer.addEventListener('scroll', () => {
 }, { passive: true });
 new ResizeObserver(() => refreshFitIfNeeded()).observe(viewer);
 window.addEventListener('keydown', event => {
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'n') { event.preventDefault(); void newWindow().catch(error => toast(String(error))); return; }
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 't') { event.preventDefault(); newDocumentTab(); return; }
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'w') { event.preventDefault(); void closeDocumentTab(activeDocumentId); return; }
+  if (event.ctrlKey && event.key === 'Tab') {
+    event.preventDefault();
+    const index = documentTabs.findIndex(tab => tab.id === activeDocumentId);
+    activateDocumentTab(documentTabs[(index + (event.shiftKey ? -1 : 1) + documentTabs.length) % documentTabs.length].id);
+    return;
+  }
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'o') { event.preventDefault(); pickDocument(); }
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'f') { event.preventDefault(); if (pdf) { setSidebar(true); showTab('search'); } }
   if ((event.metaKey || event.ctrlKey) && (event.key === '+' || event.key === '=')) { event.preventDefault(); setZoom(zoom + 0.15); }
   if ((event.metaKey || event.ctrlKey) && event.key === '-') { event.preventDefault(); setZoom(zoom - 0.15); }
-  if (event.target instanceof HTMLInputElement) return;
+  if (event.defaultPrevented || (event.target instanceof Element && event.target.closest('input, textarea, button, [role=tab], [contenteditable=true]'))) return;
   if (event.key === 'ArrowRight' || event.key === 'PageDown') { event.preventDefault(); goToPage(currentPage + 1); }
   if (event.key === 'ArrowLeft' || event.key === 'PageUp') { event.preventDefault(); goToPage(currentPage - 1); }
 });
+void onMenuAction(action => {
+  if (action === 'new-tab') newDocumentTab();
+  if (action === 'close-tab') void closeDocumentTab(activeDocumentId);
+  if (action === 'open') void pickDocument();
+  if (action === 'find' && pdf) { setSidebar(true); showTab('search'); }
+}).catch(error => console.error('Unable to register menu actions:', error));
 onOpenedDocument(openDocument, error => toast(error instanceof Error ? error.message : 'Unable to open file.', 6000));
 let lastDropPath = '';
 let lastDropTime = 0;
@@ -622,13 +803,14 @@ void getCurrentWebview().onDragDropEvent(event => {
     overlay.hidden = true;
   } else if (event.payload.type === 'drop') {
     overlay.hidden = true;
-    const path = event.payload.paths[0];
-    if (!path) return;
+    const paths = event.payload.paths;
+    const path = paths.join('\n');
+    if (!paths.length) return;
     const now = performance.now();
     if (path === lastDropPath && now - lastDropTime < 500) return;
     lastDropPath = path;
     lastDropTime = now;
-    void readDocument(path).then(openDocument).catch(error => {
+    void (async () => { for (const path of paths) await openDocument(await readDocument(path)); })().catch(error => {
       toast(error instanceof Error ? error.message : 'Unable to open file.', 6000);
     });
   }

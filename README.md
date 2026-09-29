@@ -36,3 +36,26 @@ The native outputs are in `src-tauri/target/release/bundle/`. On Windows, `src-t
 macOS builds use an ad-hoc signature. Public distribution without installation prompts requires an Apple Developer ID and notarization.
 
 PDF rendering is provided by [Mozilla PDF.js](https://mozilla.github.io/pdf.js/) under the Apache 2.0 license.
+
+## Tabs and windows
+
+Opening files adds document tabs. The picker and drag and drop accept multiple files. Each tab keeps its page position, zoom, rotation, and Find results. Use the **+** button for an empty tab and **New window** at the right of the tab bar for an independent window.
+
+| Action | macOS | Windows |
+| --- | --- | --- |
+| Open files | ⌘O | Ctrl+O |
+| New tab | ⌘T | Ctrl+T |
+| New window | ⌘N | Ctrl+N |
+| Close tab (last tab closes window) | ⌘W | Ctrl+W |
+| Next / previous tab | Ctrl+Tab / Ctrl+Shift+Tab | Ctrl+Tab / Ctrl+Shift+Tab |
+| Find | ⌘F | Ctrl+F |
+| Next / previous match in Find | Enter / Shift+Enter | Enter / Shift+Enter |
+
+New windows use the system's light or dark appearance and follow system changes until you change the theme in that window. **Invert images** is remembered between launches and shared across windows.
+
+Renderer regression checks use development-only browser tooling, which is excluded from the app:
+
+```sh
+bunx playwright install webkit chromium
+bun run test:ui
+```

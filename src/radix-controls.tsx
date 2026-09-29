@@ -29,7 +29,11 @@ export function mountSidebarTabs(node: HTMLElement, onTabChange: (tab: SidebarTa
         <Tabs.Content className="sidebar-pane" value="search" forceMount>
           <label className="search-label" htmlFor="search-input">Find in document</label>
           <input id="search-input" className="search-input" type="search" placeholder="Search text" autoComplete="off" />
-          <div id="search-status" className="search-status" role="status" aria-live="polite">Enter text to search.</div>
+          <div className="search-navigation">
+            <div id="search-status" className="search-status" role="status" aria-live="polite">Enter text to search.</div>
+            <button id="previous-match" className="icon-button" aria-label="Previous match" title="Previous match (Shift+Enter)" disabled>↑</button>
+            <button id="next-match" className="icon-button" aria-label="Next match" title="Next match (Enter)" disabled>↓</button>
+          </div>
           <div id="search-results" className="search-results" />
         </Tabs.Content>
       </Tabs.Root>
@@ -38,13 +42,17 @@ export function mountSidebarTabs(node: HTMLElement, onTabChange: (tab: SidebarTa
 
   const root = createRoot(node);
   flushSync(() => root.render(<SidebarTabs />));
-  return { setTab, unmount: () => root.unmount() };
+  return { setTab: (tab: SidebarTab) => flushSync(() => setTab(tab)), unmount: () => root.unmount() };
 }
 
-export function mountThemeSwitch(node: HTMLElement, onDarkChange: (dark: boolean) => void, onInvertImagesChange: (invert: boolean) => void) {
+export function mountThemeSwitch(node: HTMLElement, initial: { dark: boolean; invertImages: boolean }, onDarkChange: (dark: boolean) => void, onInvertImagesChange: (invert: boolean) => void) {
+  let updateDark: (value: boolean) => void = () => {};
+  let updateInvert: (value: boolean) => void = () => {};
   function ThemeSwitch() {
-    const [dark, setDark] = useState(false);
-    const [invertImages, setInvertImages] = useState(true);
+    const [dark, setDark] = useState(initial.dark);
+    const [invertImages, setInvertImages] = useState(initial.invertImages);
+    updateDark = setDark;
+    updateInvert = setInvertImages;
     return (
       <div className="theme-controls">
         <div className="theme-control">
@@ -78,5 +86,5 @@ export function mountThemeSwitch(node: HTMLElement, onDarkChange: (dark: boolean
   }
   const root = createRoot(node);
   flushSync(() => root.render(<ThemeSwitch />));
-  return () => root.unmount();
+  return { setDark: (value: boolean) => updateDark(value), setInvert: (value: boolean) => updateInvert(value), unmount: () => root.unmount() };
 }

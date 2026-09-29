@@ -9,44 +9,21 @@ export type SearchHit = {
 };
 
 export function findOccurrences(text: string, query: string, page: number): SearchHit[] {
-  const needle = query.trim().replace(/\s+/g, ' ').toLocaleLowerCase();
-  if (!needle) return [];
-
-  let normalized = '';
-  const starts: number[] = [];
-  const ends: number[] = [];
-  for (let index = 0; index < text.length;) {
-    const start = index;
-    if (/\s/.test(text[index])) {
-      while (index < text.length && /\s/.test(text[index])) index++;
-      normalized += ' ';
-    } else {
-      normalized += text[index++];
-    }
-    starts.push(start);
-    ends.push(index);
-  }
-
-  const haystack = normalized.toLocaleLowerCase();
+  const words = query.trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return [];
+  // Literal matching keeps offsets in the original PDF text, including Unicode.
+  const pattern = words.map(word => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+');
   const hits: SearchHit[] = [];
-  for (let from = 0; from < haystack.length;) {
-    const position = haystack.indexOf(needle, from);
-    if (position < 0) break;
-    const snippetStart = Math.max(0, position - 36);
-    const snippetEnd = Math.min(normalized.length, position + needle.length + 56);
-    const prefix = snippetStart ? '…' : '';
-    const snippet = `${prefix}${normalized.slice(snippetStart, snippetEnd)}${snippetEnd < normalized.length ? '…' : ''}`;
-    const matchStart = prefix.length + position - snippetStart;
-    hits.push({
-      page,
-      occurrence: hits.length + 1,
-      start: starts[position],
-      end: ends[position + needle.length - 1],
-      snippet,
-      matchStart,
-      matchEnd: matchStart + needle.length
-    });
-    from = position + needle.length;
+  for (const match of text.matchAll(new RegExp(pattern, 'giu'))) {
+    const start = match.index;
+    const end = start + match[0].length;
+    const snippetStart = Math.max(0, start - 36);
+    const snippetEnd = Math.min(text.length, end + 56);
+    const before = `${snippetStart ? '…' : ''}${text.slice(snippetStart, start).replace(/\s+/g, ' ')}`;
+    const matched = text.slice(start, end).replace(/\s+/g, ' ');
+    const after = `${text.slice(end, snippetEnd).replace(/\s+/g, ' ')}${snippetEnd < text.length ? '…' : ''}`;
+    hits.push({ page, occurrence: hits.length + 1, start, end,
+      snippet: before + matched + after, matchStart: before.length, matchEnd: before.length + matched.length });
   }
   return hits;
 }

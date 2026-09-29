@@ -10,3 +10,6 @@ src-tauri/target/
 src-tauri/gen/schemas/
 
 electron/
+
+test-results/
+playwright-report/

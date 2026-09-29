@@ -32,3 +32,12 @@ Use current GitHub Actions versions that run on Node 24; do not add Node 20 acti
 ## UI review
 
 Before finishing a UI change, check that navigation remains usable, controls have accessible names, tabs work by keyboard, the PDF and thumbnail themes agree, and the screen has no decoration without a task. Review both light and dark screenshots with a real PDF.
+
+## Documents, windows, and preferences
+
+- Keep each window's open-file queue separate. OS file-open events go to the focused window and open every file in its own tab.
+- Keep page position, zoom, rotation, and Find state separate for each document tab. Share the PDF.js worker within a window, release inactive canvases, and destroy closed documents.
+- Start each window with the system color scheme; follow system changes until the user overrides the theme in that window. Persist the image inversion preference and synchronize it across windows.
+- Match the installed PDF.js text layer CSS variables and transforms. Search offsets must refer to the same text items used for rendering, including empty items and line endings.
+- Cancel stale searches and navigation before a new query, document, or page selection. Resolve the target page before scrolling to a match; avoid a second delayed scroll.
+- Run `bun run test:ui` after viewer or sidebar changes (`bunx playwright install webkit chromium` once). The browser checks cover a 24-page PDF with 72 matches, result navigation, layout, tab state, and preferences in WebKit and Chromium. Both packaging jobs run their platform's browser checks.
