@@ -4,32 +4,31 @@ import { open } from '@tauri-apps/plugin-dialog';
 
 export type OpenedDocument = { name: string; bytes: Uint8Array };
 
-export async function readPdf(path: string): Promise<OpenedDocument> {
-  const bytes = await invoke<ArrayBuffer>('read_pdf', { path });
-  return { name: path.split(/[\\/]/).pop() || 'Document.pdf', bytes: new Uint8Array(bytes) };
+export async function readDocument(path: string): Promise<OpenedDocument> {
+  const bytes = await invoke<ArrayBuffer>('read_document', { path });
+  return { name: path.split(/[\\/]/).pop() || 'Document', bytes: new Uint8Array(bytes) };
 }
 
-export async function pickPdf(): Promise<OpenedDocument | null> {
+export async function pickDocumentFile(): Promise<OpenedDocument | null> {
   const path = await open({
     multiple: false,
-    directory: false,
-    filters: [{ name: 'PDF documents', extensions: ['pdf'] }]
+    directory: false
   });
-  return typeof path === 'string' ? readPdf(path) : null;
+  return typeof path === 'string' ? readDocument(path) : null;
 }
 
-export function onOpenedPdf(callback: (file: OpenedDocument) => void): () => void {
+export function onOpenedDocument(callback: (file: OpenedDocument) => void, onError: (error: unknown) => void): () => void {
   let disposed = false;
   let unlisten: UnlistenFn | undefined;
   const consumePending = async () => {
     try {
-      const path = await invoke<string | null>('take_pending_pdf');
-      if (path && !disposed) callback(await readPdf(path));
+      const path = await invoke<string | null>('take_pending_document');
+      if (path && !disposed) callback(await readDocument(path));
     } catch (error) {
-      console.error('Unable to open PDF from the operating system:', error);
+      onError(error);
     }
   };
-  void listen('open-pdf-path', () => { void consumePending(); }).then(stop => {
+  void listen('open-document-path', () => { void consumePending(); }).then(stop => {
     if (disposed) stop();
     else {
       unlisten = stop;

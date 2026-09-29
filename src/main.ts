@@ -2,8 +2,10 @@ import * as pdfjs from 'pdfjs-dist';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import './style.css';
-import { pickPdf, readPdf, onOpenedPdf, type OpenedDocument } from './desktop';
+import { pickDocumentFile, readDocument, onOpenedDocument, type OpenedDocument } from './desktop';
+import { darkenOutsideImages } from './dark-page';
 import { mountSidebarTabs, mountThemeSwitch } from './radix-controls';
+import { findOccurrences, type SearchHit } from './search';
 
 // PDF.js uses recent Map methods that older system webviews may not provide.
 const mapPrototype = Map.prototype as Map<unknown, unknown> & {
@@ -23,7 +25,6 @@ pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
 type PdfDocument = pdfjs.PDFDocumentProxy;
 type Dimensions = { width: number; height: number };
-type SearchHit = { page: number; snippet: string };
 
 const paths: Record<string, string> = {
   file: '<path d="M7 2.75h6l4.25 4.25V20a1.25 1.25 0 0 1-1.25 1.25H7A1.25 1.25 0 0 1 5.75 20V4A1.25 1.25 0 0 1 7 2.75Z"/><path d="M13 3v4.5h4.25M8.5 12h6M8.5 15.5h6"/>',
@@ -39,9 +40,13 @@ const paths: Record<string, string> = {
 };
 function icon(name: string, size = 18) { return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name]}</svg>`; }
 function escapeHtml(text: string) { return text.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!); }
+function releaseCanvases(root: Element) {
+  root.querySelectorAll('canvas').forEach(canvas => { canvas.width = 0; canvas.height = 0; });
+}
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
 document.documentElement.dataset.theme = 'light';
+document.documentElement.dataset.invertImages = 'true';
 app.innerHTML = `
   <header class="toolbar">
     <div class="toolbar-left">
@@ -80,6 +85,18 @@ app.innerHTML = `
     </main>
   </div>
   <div id="drop-overlay" class="drop-overlay" hidden><div>${icon('file', 28)}<strong>Drop PDF to open</strong></div></div>
+  <dialog id="password-dialog" class="password-dialog" aria-labelledby="password-title">
+    <form method="dialog">
+      <h2 id="password-title">Password required</h2>
+      <p id="password-message">Enter the password for this PDF.</p>
+      <label for="pdf-password">Password</label>
+      <input id="pdf-password" type="password" autocomplete="off" />
+      <div class="password-actions">
+        <button id="password-cancel" class="open-button" type="button">Cancel</button>
+        <button class="open-button" value="open">Open</button>
+      </div>
+    </form>
+  </dialog>
   <div id="toast" class="toast" role="status" hidden></div>
 `;
 
@@ -104,18 +121,34 @@ let dimensions: Dimensions[] = [];
 let renderEpoch = 0;
 let searchEpoch = 0;
 let hits: SearchHit[] = [];
+let selectedHit: SearchHit | null = null;
+let darkMode = false;
+let invertImages = true;
 let toastTimer: number | undefined;
 let pageObserver: IntersectionObserver | null = null;
 let thumbObserver: IntersectionObserver | null = null;
 
-function toast(message: string) {
+function toast(message: string, duration = 3500) {
   const el = $('#toast');
   el.textContent = message;
   el.hidden = false;
   window.clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => { el.hidden = true; }, 3500);
+  toastTimer = window.setTimeout(() => { el.hidden = true; }, duration);
 }
 function displayName(name: string) { return name.replace(/\.pdf$/i, ''); }
+function requestPassword(wrongPassword: boolean): Promise<string | null> {
+  const dialog = $<HTMLDialogElement>('#password-dialog');
+  const input = $<HTMLInputElement>('#pdf-password');
+  $('#password-message').textContent = wrongPassword ? 'Incorrect password. Try again.' : 'Enter the password for this PDF.';
+  input.value = '';
+  dialog.returnValue = '';
+  dialog.showModal();
+  input.focus();
+  return new Promise(resolve => dialog.addEventListener('close', () => {
+    resolve(dialog.returnValue === 'open' ? input.value : null);
+  }, { once: true }));
+}
+$<HTMLButtonElement>('#password-cancel').addEventListener('click', () => $<HTMLDialogElement>('#password-dialog').close('cancel'));
 function updateTitle() {
   $('#document-title').textContent = pdf ? displayName(documentName) : 'Preview Pro Max';
   document.title = pdf ? `${documentName} — Preview Pro Max` : 'Preview Pro Max';
@@ -185,6 +218,7 @@ function rebuildPages() {
   if (!pdf) return;
   renderEpoch++;
   pageObserver?.disconnect();
+  releaseCanvases(pages);
   pages.innerHTML = '';
   for (let i = 0; i < pdf.numPages; i++) {
     const shell = document.createElement('section');
@@ -223,8 +257,14 @@ async function renderPage(shell: HTMLElement, epoch: number) {
     canvas.style.height = `${viewport.height}px`;
     const context = canvas.getContext('2d', { alpha: false });
     if (!context) throw new Error('Canvas is unavailable.');
-    await page.render({ canvasContext: context, canvas, viewport, transform: ratio === 1 ? undefined : [ratio, 0, 0, ratio, 0, 0] }).promise;
+    const preserveImages = darkMode && !invertImages;
+    if (preserveImages) page.imageCoordinates = null;
+    await page.render({ canvasContext: context, canvas, viewport, transform: ratio === 1 ? undefined : [ratio, 0, 0, ratio, 0, 0], recordImages: preserveImages }).promise;
     if (epoch !== renderEpoch) return;
+    if (preserveImages) {
+      try { darkenOutsideImages(canvas, page.imageCoordinates); }
+      catch (error) { canvas.classList.add('dark-filter-fallback'); console.error('Unable to preserve image colors:', error); }
+    }
     const textLayer = document.createElement('div');
     textLayer.className = 'textLayer';
     textLayer.style.setProperty('--scale-factor', String(viewport.scale));
@@ -248,7 +288,9 @@ function trimRenderedPages() {
   pages.querySelectorAll<HTMLElement>('.page-shell[data-rendered="true"]').forEach(shell => {
     const rect = shell.getBoundingClientRect();
     if (rect.bottom < view.top - margin || rect.top > view.bottom + margin) {
-      shell.querySelector('canvas')?.remove();
+      const canvas = shell.querySelector('canvas');
+      canvas?.remove();
+      if (canvas) { canvas.width = 0; canvas.height = 0; }
       shell.querySelector('.textLayer')?.remove();
       shell.dataset.rendered = 'false';
       if (!shell.querySelector('.page-loading')) {
@@ -262,13 +304,41 @@ function trimRenderedPages() {
 
 function highlightVisibleText(shell: HTMLElement) {
   const query = $<HTMLInputElement>('#search-input').value.trim().toLocaleLowerCase();
+  let occurrence = 0;
   shell.querySelectorAll<HTMLElement>('.textLayer span').forEach(span => {
-    span.classList.toggle('search-match', !!query && (span.textContent || '').toLocaleLowerCase().includes(query));
+    const source = span.textContent || '';
+    if (!query) { span.textContent = source; return; }
+    const lower = source.toLocaleLowerCase();
+    const content = document.createDocumentFragment();
+    let from = 0;
+    while (from < source.length) {
+      const position = lower.indexOf(query, from);
+      if (position === -1) break;
+      content.append(document.createTextNode(source.slice(from, position)));
+      const mark = document.createElement('mark');
+      mark.className = 'search-match';
+      mark.dataset.occurrence = String(++occurrence);
+      mark.textContent = source.slice(position, position + query.length);
+      content.append(mark);
+      from = position + query.length;
+    }
+    content.append(document.createTextNode(source.slice(from)));
+    span.replaceChildren(content);
   });
+  if (selectedHit?.page === Number(shell.dataset.page)) scrollToSelectedMatch(shell);
+}
+function scrollToSelectedMatch(shell: HTMLElement) {
+  if (!selectedHit) return false;
+  const mark = shell.querySelector<HTMLElement>(`mark[data-occurrence="${selectedHit.occurrence}"]`);
+  if (!mark) return false;
+  const offset = mark.getBoundingClientRect().top - viewer.getBoundingClientRect().top;
+  viewer.scrollTo({ top: viewer.scrollTop + offset - viewer.clientHeight * 0.32, behavior: 'smooth' });
+  return true;
 }
 function makeThumbnails() {
   if (!pdf) return;
   thumbObserver?.disconnect();
+  releaseCanvases(thumbs);
   thumbs.innerHTML = '';
   for (let i = 1; i <= pdf.numPages; i++) {
     const button = document.createElement('button');
@@ -284,6 +354,7 @@ function makeThumbnails() {
       button.dataset.visible = String(entry.isIntersecting);
       if (entry.isIntersecting) renderThumbnail(button, renderEpoch);
       else if (button.dataset.rendered === 'true') {
+        releaseCanvases(button);
         const placeholder = document.createElement('span');
         placeholder.className = 'thumbnail-placeholder';
         button.querySelector('.thumbnail-paper')?.replaceChildren(placeholder);
@@ -295,13 +366,13 @@ function makeThumbnails() {
   $('#thumb-count').textContent = `${pdf.numPages} ${pdf.numPages === 1 ? 'page' : 'pages'}`;
   updatePageUi();
 }
-async function renderThumbnail(button: HTMLElement, _epoch: number) {
+async function renderThumbnail(button: HTMLElement, epoch: number) {
   if (!pdf || button.dataset.rendered) return;
   button.dataset.rendered = 'loading';
   try {
     const sourcePdf = pdf;
     const page = await pdf.getPage(Number(button.dataset.page));
-    if (pdf !== sourcePdf) return;
+    if (pdf !== sourcePdf || epoch !== renderEpoch) return;
     const natural = page.getViewport({ scale: 1, rotation });
     const viewport = page.getViewport({ scale: 126 / natural.width, rotation });
     const canvas = document.createElement('canvas');
@@ -309,14 +380,42 @@ async function renderThumbnail(button: HTMLElement, _epoch: number) {
     canvas.height = Math.ceil(viewport.height * 1.5);
     canvas.style.width = `${viewport.width}px`;
     canvas.style.height = `${viewport.height}px`;
-    await page.render({ canvasContext: canvas.getContext('2d')!, canvas, viewport, transform: [1.5, 0, 0, 1.5, 0, 0] }).promise;
-    if (pdf !== sourcePdf || button.dataset.visible !== 'true') return;
+    const preserveImages = darkMode && !invertImages;
+    if (preserveImages) page.imageCoordinates = null;
+    await page.render({ canvasContext: canvas.getContext('2d')!, canvas, viewport, transform: [1.5, 0, 0, 1.5, 0, 0], recordImages: preserveImages }).promise;
+    if (pdf !== sourcePdf || epoch !== renderEpoch || button.dataset.visible !== 'true') return;
+    if (preserveImages) {
+      try { darkenOutsideImages(canvas, page.imageCoordinates); }
+      catch (error) { canvas.classList.add('dark-filter-fallback'); console.error('Unable to preserve thumbnail image colors:', error); }
+    }
     button.querySelector('.thumbnail-paper')!.replaceChildren(canvas);
     button.dataset.rendered = 'true';
   } catch { /* Keep the placeholder until the page is visible again. */ }
   finally { if (button.dataset.rendered === 'loading') button.dataset.rendered = ''; }
 }
 async function openDocument(file: OpenedDocument) {
+  const bytes = file.bytes instanceof Uint8Array ? file.bytes : new Uint8Array(file.bytes);
+  const task = pdfjs.getDocument({ data: bytes, useSystemFonts: true });
+  let passwordCanceled = false;
+  task.onPassword = (updatePassword: (password: string) => void, reason: number) => {
+    void requestPassword(reason === pdfjs.PasswordResponses.INCORRECT_PASSWORD).then(password => {
+      if (password === null) { passwordCanceled = true; void task.destroy(); }
+      else updatePassword(password);
+    });
+  };
+  let loaded: PdfDocument;
+  try {
+    loaded = await task.promise;
+  } catch (error) {
+    await task.destroy();
+    if (passwordCanceled) return;
+    console.error(error);
+    const message = error instanceof Error && error.name === 'PasswordException'
+      ? 'This PDF is password protected.'
+      : 'This file is not a supported PDF. Choose a PDF document.';
+    toast(message, 6000);
+    return;
+  }
   try {
     searchEpoch++;
     renderEpoch++;
@@ -326,8 +425,6 @@ async function openDocument(file: OpenedDocument) {
     pdf = null;
     $('#welcome').hidden = false;
     pages.hidden = true;
-    const bytes = file.bytes instanceof Uint8Array ? file.bytes : new Uint8Array(file.bytes);
-    const loaded = await pdfjs.getDocument({ data: bytes, useSystemFonts: true }).promise;
     pdf = loaded;
     documentName = file.name;
     currentPage = 1;
@@ -348,6 +445,8 @@ async function openDocument(file: OpenedDocument) {
     document.querySelectorAll<HTMLElement>('.document-tool').forEach(el => el.hidden = false);
     setSidebar(sidebarVisible);
     $<HTMLInputElement>('#search-input').value = '';
+    hits = [];
+    selectedHit = null;
     $('#search-results').innerHTML = '';
     $('#search-status').textContent = 'Enter text to search.';
     rebuildPages();
@@ -361,15 +460,16 @@ async function openDocument(file: OpenedDocument) {
 }
 async function pickDocument() {
   try {
-    const document = await pickPdf();
+    const document = await pickDocumentFile();
     if (document) await openDocument(document);
-  } catch (error) { toast(error instanceof Error ? error.message : 'Unable to open PDF.'); }
+  } catch (error) { toast(error instanceof Error ? error.message : 'Unable to open file.'); }
 }
 async function searchDocument() {
   if (!pdf) return;
-  const query = $<HTMLInputElement>('#search-input').value.trim().toLocaleLowerCase();
+  const query = $<HTMLInputElement>('#search-input').value.trim();
   const epoch = ++searchEpoch;
   hits = [];
+  selectedHit = null;
   $('#search-results').innerHTML = '';
   if (!query) { $('#search-status').textContent = 'Enter text to search.'; pages.querySelectorAll('.page-shell').forEach(shell => highlightVisibleText(shell as HTMLElement)); return; }
   $('#search-status').textContent = 'Searching…';
@@ -377,20 +477,22 @@ async function searchDocument() {
     if (epoch !== searchEpoch) return;
     try {
       const content = await pdf.getPage(page).then(p => p.getTextContent());
-      const text = content.items.map(item => 'str' in item ? item.str : '').join(' ').replace(/\s+/g, ' ');
-      const pos = text.toLocaleLowerCase().indexOf(query);
-      if (pos !== -1) {
-        const start = Math.max(0, pos - 46);
-        const end = Math.min(text.length, pos + query.length + 76);
-        hits.push({ page, snippet: `${start ? '…' : ''}${text.slice(start, end)}${end < text.length ? '…' : ''}` });
-      }
+      const text = content.items.map(item => 'str' in item ? `${item.str}${item.hasEOL ? ' ' : ''}` : '').join('');
+      for (const hit of findOccurrences(text, query, page)) hits.push(hit);
     } catch { /* Skip pages without readable text. */ }
     if (page % 10 === 0) await new Promise(resolve => setTimeout(resolve, 0));
   }
   if (epoch !== searchEpoch) return;
-  $('#search-status').textContent = hits.length ? `${hits.length} ${hits.length === 1 ? 'page' : 'pages'} found` : 'No matches found';
-  $('#search-results').innerHTML = hits.map(hit => `<button class="search-result" data-page="${hit.page}"><span>Page ${hit.page}</span><p>${escapeHtml(hit.snippet)}</p></button>`).join('');
-  $('#search-results').querySelectorAll<HTMLButtonElement>('button').forEach(button => button.addEventListener('click', () => goToPage(Number(button.dataset.page))));
+  $('#search-status').textContent = hits.length ? `${hits.length} ${hits.length === 1 ? 'match' : 'matches'} found` : 'No matches found';
+  $('#search-results').innerHTML = hits.map((hit, index) => `<button class="search-result" data-index="${index}"><span>Page ${hit.page} · match ${hit.occurrence}</span><p>${escapeHtml(hit.snippet)}</p></button>`).join('');
+  $('#search-results').querySelectorAll<HTMLButtonElement>('button').forEach(button => button.addEventListener('click', () => {
+    const hit = hits[Number(button.dataset.index)];
+    if (!hit) return;
+    selectedHit = hit;
+    $('#search-results').querySelectorAll('.search-result').forEach(result => result.classList.toggle('active', result === button));
+    const shell = pages.querySelector<HTMLElement>(`.page-shell[data-page="${hit.page}"]`);
+    if (!shell || !scrollToSelectedMatch(shell)) goToPage(hit.page);
+  }));
   pages.querySelectorAll('.page-shell').forEach(shell => highlightVisibleText(shell as HTMLElement));
 }
 
@@ -406,7 +508,14 @@ $('#zoom-out').addEventListener('click', () => setZoom(zoom - 0.15));
 $('#fit-width').addEventListener('click', () => setZoom(scaleForFit(), true));
 $('#rotate').addEventListener('click', () => { rotation = (rotation + 90) % 360; if (fitWidth) zoom = scaleForFit(); rebuildPages(); makeThumbnails(); zoomLabel.textContent = `${Math.round(zoom * 100)}%`; });
 mountThemeSwitch($('#theme-control'), dark => {
+  const wasPreservingImages = darkMode && !invertImages;
+  darkMode = dark;
   document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  if (pdf && (wasPreservingImages || (dark && !invertImages))) { rebuildPages(); makeThumbnails(); }
+}, invert => {
+  invertImages = invert;
+  document.documentElement.dataset.invertImages = String(invert);
+  if (pdf && darkMode) { rebuildPages(); makeThumbnails(); }
 });
 $('#search-toggle').addEventListener('click', () => { setSidebar(true); showTab('search'); });
 let searchTimer: number | undefined;
@@ -434,7 +543,7 @@ window.addEventListener('keydown', event => {
   if (event.key === 'ArrowRight' || event.key === 'PageDown') { event.preventDefault(); goToPage(currentPage + 1); }
   if (event.key === 'ArrowLeft' || event.key === 'PageUp') { event.preventDefault(); goToPage(currentPage - 1); }
 });
-onOpenedPdf(openDocument);
+onOpenedDocument(openDocument, error => toast(error instanceof Error ? error.message : 'Unable to open file.', 6000));
 let lastDropPath = '';
 let lastDropTime = 0;
 void getCurrentWebview().onDragDropEvent(event => {
@@ -447,13 +556,12 @@ void getCurrentWebview().onDragDropEvent(event => {
     overlay.hidden = true;
     const path = event.payload.paths[0];
     if (!path) return;
-    if (!/\.pdf$/i.test(path)) { toast('Please drop a PDF file.'); return; }
     const now = performance.now();
     if (path === lastDropPath && now - lastDropTime < 500) return;
     lastDropPath = path;
     lastDropTime = now;
-    void readPdf(path).then(openDocument).catch(error => {
-      toast(error instanceof Error ? error.message : 'Unable to open PDF.');
+    void readDocument(path).then(openDocument).catch(error => {
+      toast(error instanceof Error ? error.message : 'Unable to open file.', 6000);
     });
   }
 }).catch(error => console.error('Unable to listen for file drops:', error));

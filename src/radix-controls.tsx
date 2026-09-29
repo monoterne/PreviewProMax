@@ -41,20 +41,38 @@ export function mountSidebarTabs(node: HTMLElement, onTabChange: (tab: SidebarTa
   return { setTab, unmount: () => root.unmount() };
 }
 
-export function mountThemeSwitch(node: HTMLElement, onChange: (dark: boolean) => void) {
+export function mountThemeSwitch(node: HTMLElement, onDarkChange: (dark: boolean) => void, onInvertImagesChange: (invert: boolean) => void) {
   function ThemeSwitch() {
     const [dark, setDark] = useState(false);
+    const [invertImages, setInvertImages] = useState(true);
     return (
-      <div className="theme-control">
-        <label htmlFor="dark-mode-switch">Dark mode</label>
-        <Switch.Root
-          id="dark-mode-switch"
-          className="theme-switch"
-          checked={dark}
-          onCheckedChange={checked => { setDark(checked); onChange(checked); }}
-        >
-          <Switch.Thumb className="theme-switch-thumb" />
-        </Switch.Root>
+      <div className="theme-controls">
+        <div className="theme-control">
+          <label htmlFor="dark-mode-switch">Dark mode</label>
+          <Switch.Root
+            id="dark-mode-switch"
+            className="theme-switch"
+            aria-label="Dark mode"
+            title="Dark mode"
+            checked={dark}
+            onCheckedChange={checked => { setDark(checked); onDarkChange(checked); }}
+          >
+            <Switch.Thumb className="theme-switch-thumb" />
+          </Switch.Root>
+        </div>
+        {dark && <div className="theme-control">
+          <label htmlFor="invert-images-switch">Invert images</label>
+          <Switch.Root
+            id="invert-images-switch"
+            className="theme-switch"
+            aria-label="Invert images in dark mode"
+            title="Invert images in dark mode"
+            checked={invertImages}
+            onCheckedChange={checked => { setInvertImages(checked); onInvertImagesChange(checked); }}
+          >
+            <Switch.Thumb className="theme-switch-thumb" />
+          </Switch.Root>
+        </div>}
       </div>
     );
   }

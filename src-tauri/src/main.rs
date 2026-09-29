@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-  preview_pro_max_lib::run();
+    preview_pro_max_lib::run();
 }

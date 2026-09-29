@@ -24,6 +24,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
+      - run: bun test
       - run: bun tauri build --bundles ${{ matrix.bundles }}
       - name: Prepare downloads
         shell: bash

@@ -4,23 +4,20 @@ use tauri::ipc::Response;
 use tauri::{Emitter, Manager};
 
 #[derive(Default)]
-struct PendingPdf(Mutex<Option<String>>);
+struct PendingDocument(Mutex<Option<String>>);
 
-fn is_pdf(path: &str) -> bool {
-    Path::new(path)
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("pdf"))
+fn is_file(path: &str) -> bool {
+    Path::new(path).is_file()
 }
 
-fn queue_pdf(app: &tauri::AppHandle, path: String) {
-    if !is_pdf(&path) {
+fn queue_document(app: &tauri::AppHandle, path: String) {
+    if !is_file(&path) {
         return;
     }
-    if let Ok(mut pending) = app.state::<PendingPdf>().0.lock() {
+    if let Ok(mut pending) = app.state::<PendingDocument>().0.lock() {
         *pending = Some(path);
     }
-    let _ = app.emit("open-pdf-path", ());
+    let _ = app.emit("open-document-path", ());
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
         let _ = window.set_focus();
@@ -28,14 +25,14 @@ fn queue_pdf(app: &tauri::AppHandle, path: String) {
 }
 
 #[tauri::command]
-fn take_pending_pdf(state: tauri::State<'_, PendingPdf>) -> Option<String> {
+fn take_pending_document(state: tauri::State<'_, PendingDocument>) -> Option<String> {
     state.0.lock().ok()?.take()
 }
 
 #[tauri::command]
-async fn read_pdf(path: String) -> Result<Response, String> {
-    if !is_pdf(&path) {
-        return Err("Please choose a PDF file.".into());
+async fn read_document(path: String) -> Result<Response, String> {
+    if !is_file(&path) {
+        return Err("Please choose a file.".into());
     }
     let bytes = tauri::async_runtime::spawn_blocking(move || std::fs::read(path))
         .await
@@ -46,17 +43,20 @@ async fn read_pdf(path: String) -> Result<Response, String> {
 
 pub fn run() {
     tauri::Builder::default()
-        .manage(PendingPdf::default())
+        .manage(PendingDocument::default())
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            if let Some(path) = args.into_iter().skip(1).find(|value| is_pdf(value)) {
-                queue_pdf(app, path);
+            if let Some(path) = args.into_iter().skip(1).find(|value| is_file(value)) {
+                queue_document(app, path);
             }
         }))
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![read_pdf, take_pending_pdf])
+        .invoke_handler(tauri::generate_handler![
+            read_document,
+            take_pending_document
+        ])
         .setup(|app| {
-            if let Some(path) = std::env::args().skip(1).find(|value| is_pdf(value)) {
-                queue_pdf(app.handle(), path);
+            if let Some(path) = std::env::args().skip(1).find(|value| is_file(value)) {
+                queue_document(app.handle(), path);
             }
             Ok(())
         })
@@ -67,7 +67,7 @@ pub fn run() {
             if let tauri::RunEvent::Opened { urls } = event {
                 for url in urls {
                     if let Ok(path) = url.to_file_path() {
-                        queue_pdf(app, path.to_string_lossy().into_owned());
+                        queue_document(app, path.to_string_lossy().into_owned());
                     }
                 }
             }

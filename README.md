@@ -4,13 +4,15 @@ A desktop PDF viewer for macOS and Windows. The interface uses Bun, TypeScript, 
 
 ## Features
 
-- Open PDFs from the file picker, drag and drop, or the operating system's PDF file association
+- Open PDFs, including password protected PDFs, from the file picker, drag and drop, or the operating system's PDF file association; unsupported files show a clear error
 - Page thumbnails, page navigation, zoom, fit width, and rotation
-- Search and select readable text
-- Light and dark mode for the app, PDF pages, and thumbnails
+- Find every occurrence of readable text and select a result
+- Light and dark mode for the app, PDF pages, and thumbnails, with an option to keep embedded image colors in dark mode
 - Lazy rendering with offscreen canvas eviction and a page raster limit
 
-Dark mode applies a display filter to each rendered page and thumbnail. It does not change the file, and it also transforms photos and other page colors.
+PDF.js opens PDF documents, including PDFs whose names do not end in `.pdf`. The app accepts any file from the picker or a drop so PDF.js can validate it, then reports unsupported files without closing the current document.
+
+Dark mode changes only the display. The **Invert images** switch is available while dark mode is on. Turn it off to leave embedded images in their original colors while darkening the rest of each page.
 
 ## Development
 
