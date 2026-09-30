@@ -4,9 +4,9 @@ Preview Pro Max is a desktop PDF viewer built with Tauri 2, Bun, TypeScript, Tai
 
 ## Commit and workflow names
 
-- Give every commit subject and workflow run a short, clear type-prefixed name, such as `feat: Add page bookmarks`, `fix: Restore PDF search`, `docs: Explain downloads`, `ci: Test dependency updates`, or `chore: Update Bun packages`.
+- Give every commit subject and workflow run a short, clear, entirely lowercase type-prefixed name, such as `feat: add page bookmarks`, `fix: restore pdf search`, `docs: explain downloads`, `ci: test dependency updates`, or `chore: update bun packages`.
 - Aim for six words or fewer. Clarity takes priority over an exact count. Use one line without filler.
-- Set an explicit workflow `run-name` so Actions does not display a long generated pull request title. Configure Dependabot commit prefixes, and review its generated subjects before merging.
+- Set an explicit lowercase workflow `run-name` so Actions does not display a long generated pull request title. Configure Dependabot commit prefixes, and lowercase its generated subjects when merging.
 - Run the desktop workflow on pushes and pull requests to `main`, including Dependabot pull requests. Keep its token read-only and test the production build on both platforms before merging dependency updates.
 
 Run `bun run typecheck`, `bun test`, and `bun run build:web` after renderer changes. Run `bun run dist:mac` on macOS or `bun run dist:win` on Windows after native, packaging, or dependency changes. Verify the GitHub Actions artifacts on both platforms before claiming release support.
