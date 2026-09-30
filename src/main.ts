@@ -1,6 +1,7 @@
-import * as pdfjs from 'pdfjs-dist';
+import './compatibility';
+import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
-import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 import './style.css';
 import { pickDocumentPaths, readDocument, onOpenedDocument, onMenuAction, newWindow, closeWindow, windowReady, type OpenedDocument } from './desktop';
 import { darkenOutsideImages } from './dark-page';
@@ -10,20 +11,6 @@ import { type SearchHit } from './search';
 import { searchPdf } from './pdf-search';
 import { renderOutline } from './outline';
 import type { SidebarTab } from './controls';
-
-// PDF.js uses recent Map methods that older system webviews may not provide.
-const mapPrototype = Map.prototype as Map<unknown, unknown> & {
-  getOrInsert?: (key: unknown, value: unknown) => unknown;
-  getOrInsertComputed?: (key: unknown, callback: (key: unknown) => unknown) => unknown;
-};
-mapPrototype.getOrInsert ??= function (key, value) {
-  if (!this.has(key)) this.set(key, value);
-  return this.get(key);
-};
-mapPrototype.getOrInsertComputed ??= function (key, callback) {
-  if (!this.has(key)) this.set(key, callback(key));
-  return this.get(key);
-};
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 

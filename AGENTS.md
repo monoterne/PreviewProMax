@@ -45,3 +45,13 @@ Before finishing a UI change, check that navigation remains usable, controls hav
 - Use PDF.js’s find controller for normalized search and map its original text offsets directly to text-layer items. Keep typing, no-match, hyphenation, and query cancellation checks in both browser engines.
 - Provide Pages, Find, and Contents sidebar views. Contents must support nested outlines and named destinations, with a clear empty state.
 - Create native windows hidden and reveal them only after the themed renderer is ready. Keep the initial HTML background consistent with system appearance. Never reveal an uninitialized window from the file-open queue.
+
+## System webview compatibility
+
+- Import PDF.js's official `legacy` renderer, viewer, and worker together. The modern worker uses APIs such as `Math.sumPrecise` that macOS 15 lacks; font conversion can then silently discard embedded fonts. Do not replace the compatibility build with isolated main-thread shims.
+- Keep the ReadableStream async-iteration fallback loaded before PDF.js. Its compatibility build does not provide this web API on macOS 15. Test stream cleanup and error propagation.
+- Preserve embedded PDF fonts, including CFF/LaTeX fonts. A system-font fallback is not a valid fix for broken mathematical glyphs.
+- Browser checks must serve production assets and simulate missing APIs in both the window and PDF worker. Include embedded-font fixtures rather than only unembedded Helvetica.
+- Run `bun run test:native` on macOS after `bun run build:web`; it exercises production assets in the installed WKWebView under the `tauri://` scheme. Playwright's bundled WebKit is newer than some supported system webviews and cannot replace this check. The macOS packaging job runs both.
+- Report text extraction failures explicitly. Do not convert a failed extraction into “No matches found.”
+- Keep user PDFs and extracted pages out of commits. Use generated documents and redistributable fonts for committed regression tests.

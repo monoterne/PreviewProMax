@@ -59,3 +59,12 @@ Renderer regression checks use development-only browser tooling, which is exclud
 bunx playwright install webkit chromium
 bun run test:ui
 ```
+
+The browser checks use the production build and simulate older webview APIs. On macOS, also run the native webview check:
+
+```sh
+bun run build:web
+bun run test:native
+```
+
+PDF.js's compatibility renderer and worker preserve embedded fonts on older system webviews. A small stream compatibility layer supports text extraction on macOS 15. Extraction errors are reported rather than shown as an empty result set.

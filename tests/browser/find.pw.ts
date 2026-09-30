@@ -1,34 +1,23 @@
 import { test, expect } from '@playwright/test';
+import { fixture } from '../fixtures/pdf';
 
-// Different page sizes, split text items, and enough results to overflow the sidebar.
-function fixture() {
-  const objects = ['', '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'];
-  const kids: number[] = [];
-  for (let page = 1; page <= 24; page++) {
-    const content = `BT /F1 20 Tf 32 720 Td (Page ${page}) Tj 0 -40 Td (alpha target) Tj 0 -40 Td (beta target) Tj 0 -40 Td (split) Tj 0 -28 Td (target) Tj 0 -40 Td (inter-) Tj 0 -28 Td (national) Tj ET`;
-    const stream = objects.push(`<< /Length ${content.length} >>\nstream\n${content}\nendstream`) - 1;
-    kids.push(objects.push(`<< /Type /Page /Parent 0 0 R /MediaBox [0 0 ${page % 2 ? 612 : 500} 792] /Resources << /Font << /F1 1 0 R >> >> /Contents ${stream} 0 R >>`) - 1);
-  }
-  const pages = objects.push(`<< /Type /Pages /Kids [${kids.map(n => `${n} 0 R`).join(' ')}] /Count ${kids.length} >>`) - 1;
-  for (const kid of kids) objects[kid] = objects[kid].replace('/Parent 0 0 R', `/Parent ${pages} 0 R`);
-  const outlineRoot = objects.length;
-  objects.push(`<< /Type /Outlines /First ${outlineRoot + 1} 0 R /Last ${outlineRoot + 1} 0 R /Count 2 >>`);
-  objects.push(`<< /Title (Chapter one) /Parent ${outlineRoot} 0 R /Dest [${kids[4]} 0 R /Fit] /First ${outlineRoot + 2} 0 R /Last ${outlineRoot + 2} 0 R /Count 1 >>`);
-  objects.push(`<< /Title (Section two) /Parent ${outlineRoot + 1} 0 R /Dest (section-two) >>`);
-  const root = objects.push(`<< /Type /Catalog /Pages ${pages} 0 R /Outlines ${outlineRoot} 0 R /Names << /Dests << /Names [(section-two) [${kids[11]} 0 R /Fit]] >> >> >>`) - 1;
-  let data = '%PDF-1.4\n'; const offsets = [0];
-  for (let i = 1; i < objects.length; i++) { offsets.push(data.length); data += `${i} 0 obj\n${objects[i]}\nendobj\n`; }
-  const xref = data.length;
-  data += `xref\n0 ${objects.length}\n0000000000 65535 f \n`;
-  for (const offset of offsets.slice(1)) data += `${String(offset).padStart(10, '0')} 00000 n \n`;
-  data += `trailer\n<< /Size ${objects.length} /Root ${root} 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
-  return [...new TextEncoder().encode(data)];
-}
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(bytes => {
     // Exercise the compatibility path used by older system webviews.
     (RegExp as any).escape = undefined;
+    delete (ReadableStream.prototype as any)[Symbol.asyncIterator];
+    (Math as any).sumPrecise = undefined;
+    const NativeWorker = window.Worker;
+    window.Worker = class extends NativeWorker {
+      constructor(url: string | URL, options?: WorkerOptions) {
+        const source = `Math.sumPrecise = undefined; Map.prototype.getOrInsertComputed = undefined; await import(${JSON.stringify(new URL(String(url), location.href).href)});`;
+        const blobUrl = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
+        super(blobUrl, options);
+        // The module URL is retained until the first PDF.js message confirms loading.
+        this.addEventListener('message', () => URL.revokeObjectURL(blobUrl), { once: true });
+      }
+    };
     let consumed = false;
     Object.assign(window, {
       __TAURI_INTERNALS__: {
@@ -220,4 +209,23 @@ test('contents supports nested entries, named destinations, and keyboard toggles
   await page.getByRole('button', { name: 'Expand Chapter one' }).press('Enter');
   await page.getByRole('button', { name: 'Section two', exact: true }).click();
   await expect(page.locator('#page-number')).toHaveValue('12');
+});
+
+
+test('embedded CFF fonts load when the system webview lacks Math.sumPrecise', async ({ page }) => {
+  await expect.poll(() => page.evaluate(() => Array.from(document.fonts).filter(font => font.family.startsWith('g_') && font.status === 'loaded').length)).toBeGreaterThan(0);
+  await page.getByRole('tab', { name: 'Find', exact: true }).click();
+  await page.locator('#search-input').fill('alpha');
+  await expect(page.locator('.search-result')).toHaveCount(24);
+  await expect(page.locator('.page-shell').first().locator('.search-match')).toHaveText('alpha');
+});
+
+
+test('text extraction errors are reported instead of claiming there are no matches', async ({ page }) => {
+  // Recreate the exact runtime failure after compatibility initialization.
+  await page.evaluate(() => { delete (ReadableStream.prototype as any)[Symbol.asyncIterator]; });
+  await page.getByRole('tab', { name: 'Find', exact: true }).click();
+  await page.locator('#search-input').fill('target');
+  await expect(page.locator('#search-status')).toHaveText('Unable to search this document.');
+  await expect(page.locator('.search-result')).toHaveCount(0);
 });

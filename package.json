@@ -1,6 +1,6 @@
 {
   "name": "preview-pro-max",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "description": "Desktop PDF viewer for macOS and Windows",
   "scripts": {
@@ -12,7 +12,8 @@
     "dist:win": "tauri build --bundles nsis",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "test:ui": "playwright test"
+    "test:ui": "playwright test",
+    "test:native": "bun scripts/test-native.ts"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.0",

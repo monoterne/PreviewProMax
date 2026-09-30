@@ -1,13 +1,8 @@
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { makeSearchHit, type SearchHit } from './search';
 
-// PDF.js needs RegExp.escape; macOS 15's WebKit predates it. Escaping every
-// UTF-16 code unit also handles punctuation safely in Unicode regular expressions.
-const regex = RegExp as typeof RegExp & { escape?: (text: string) => string };
-regex.escape ??= text => text.split('').map(char => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`).join('');
-
 export async function searchPdf(pdf: PDFDocumentProxy, query: string, signal: AbortSignal): Promise<SearchHit[]> {
-  const { EventBus, PDFFindController, PDFLinkService } = await import('pdfjs-dist/web/pdf_viewer.mjs');
+  const { EventBus, PDFFindController, PDFLinkService } = await import('pdfjs-dist/legacy/web/pdf_viewer.mjs');
   signal.throwIfAborted();
   // Our sidebar owns navigation; the find controller only supplies canonical offsets.
   class SearchLinks extends PDFLinkService {
@@ -18,7 +13,29 @@ export async function searchPdf(pdf: PDFDocumentProxy, query: string, signal: Ab
   const links = new SearchLinks({ eventBus });
   links.setDocument(pdf);
   const controller = new PDFFindController({ eventBus, linkService: links, updateMatchesCountOnProgress: false });
-  controller.setDocument(pdf);
+  // The upstream controller converts extraction failures into empty pages.
+  // Record them so an unreadable document cannot masquerade as "no matches".
+  const extractionErrors: unknown[] = [];
+  const source = new Proxy(pdf, {
+    get(target, key, receiver) {
+      if (key !== 'getPage') return Reflect.get(target, key, receiver);
+      return async (number: number) => {
+        try {
+          const page = await target.getPage(number);
+          return new Proxy(page, {
+            get(targetPage, pageKey, pageReceiver) {
+              if (pageKey !== 'getTextContent') return Reflect.get(targetPage, pageKey, pageReceiver);
+              return async (...args: Parameters<typeof page.getTextContent>) => {
+                try { return await targetPage.getTextContent(...args); }
+                catch (error) { extractionErrors.push(error); throw error; }
+              };
+            },
+          });
+        } catch (error) { extractionErrors.push(error); throw error; }
+      };
+    },
+  });
+  controller.setDocument(source);
   try {
     await new Promise<void>((resolve, reject) => {
       const complete = () => { cleanup(); resolve(); };
@@ -28,6 +45,7 @@ export async function searchPdf(pdf: PDFDocumentProxy, query: string, signal: Ab
       signal.addEventListener('abort', abort, { once: true });
       eventBus.dispatch('find', { type: 'again', query, caseSensitive: false, entireWord: false, highlightAll: true, findPrevious: false, matchDiacritics: false });
     });
+    if (extractionErrors.length) throw new Error('PDF text extraction failed.', { cause: extractionErrors[0] });
     const hits: SearchHit[] = [];
     for (let index = 0; index < pdf.numPages; index++) {
       signal.throwIfAborted();
