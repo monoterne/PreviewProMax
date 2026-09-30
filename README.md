@@ -9,6 +9,7 @@ A desktop PDF viewer for macOS and Windows. The interface uses Bun, TypeScript, 
 - Find every occurrence of readable text and select a result
 - Light and dark mode for the app, PDF pages, and thumbnails, with an option to keep embedded image colors in dark mode
 - Lazy rendering with offscreen canvas eviction and a page raster limit
+- Restore open windows and their document tabs after restarting the app
 
 PDF.js opens PDF documents, including PDFs whose names do not end in `.pdf`. The app accepts any file from the picker or a drop so PDF.js can validate it, then reports unsupported files without closing the current document.
 
@@ -40,6 +41,8 @@ PDF rendering is provided by [Mozilla PDF.js](https://mozilla.github.io/pdf.js/)
 ## Tabs and windows
 
 Opening files adds document tabs. The picker and drag and drop accept multiple files. Each tab keeps its page position, zoom, rotation, and Find results. Use the **+** button for an empty tab and **New window** at the right of the tab bar for an independent window.
+
+On launch, previously open windows reopen with their PDF tabs, selected tab, page, zoom, rotation, and scroll position. Empty tabs and new empty windows list saved windows; choose one to reopen its PDFs. Files that have moved or been deleted are skipped.
 
 Pinch on a trackpad or use Ctrl/Cmd plus the mouse wheel over a page to zoom around the pointer. Ordinary wheel scrolling moves through the PDF.
 

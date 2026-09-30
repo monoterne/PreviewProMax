@@ -157,6 +157,11 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .empty-icon { display: grid; place-items: center; width: 44px; height: 44px; margin-bottom: 12px; color: var(--muted); }
 .welcome h1 { margin: 0 0 18px; font-size: 17px; font-weight: 600; }
 .welcome p { margin: 12px 0 0; color: var(--muted); font-size: 12px; }
+.recent-windows { width: min(520px, 100%); max-height: min(300px, 40vh); overflow: auto; margin-top: 32px; text-align: left; }
+.recent-windows h2 { margin: 0 0 8px; color: var(--text); font-size: 13px; font-weight: 600; }
+.recent-window { display: block; width: 100%; padding: 10px 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; color: var(--text); background: transparent; border: 1px solid var(--border); border-radius: 6px; }
+.recent-window + .recent-window { margin-top: 8px; }
+.recent-window:hover { background: var(--surface-hover); }
 .drop-overlay { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; background: rgb(0 0 0 / 65%); }
 .drop-overlay > div { min-width: 250px; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 28px; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 8px; }
 .drop-overlay strong { font-size: 14px; font-weight: 600; }
