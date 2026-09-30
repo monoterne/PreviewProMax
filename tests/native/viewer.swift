@@ -27,7 +27,7 @@ class Handler: NSObject, WKURLSchemeHandler, WKScriptMessageHandler {
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         guard let result = message.body as? [String: Int] else { return }
         print("Native WKWebView: \(result)")
-        let pass = result["matches"] == expectedMatches && (result["fonts"] ?? 0) >= minimumFonts && (result["highlights"] ?? 0) > 0
+        let pass = result["matches"] == expectedMatches && (result["fonts"] ?? 0) >= minimumFonts && (result["highlights"] ?? 0) > 0 && result["pinch"] == 1
         exit(pass ? 0 : 1)
     }
 }
@@ -52,6 +52,15 @@ setInterval(() => {
   if (!document.querySelector('.page-shell[data-rendered="true"]')) return;
   if (!started) {
     started = true;
+    const viewer = document.querySelector('#viewer');
+    const shell = document.querySelector('.page-shell');
+    const width = shell.getBoundingClientRect().width;
+    viewer.dispatchEvent(new Event('gesturestart', {bubbles: true, cancelable: true}));
+    const change = new Event('gesturechange', {bubbles: true, cancelable: true});
+    Object.assign(change, {scale: 1.1, clientX: shell.getBoundingClientRect().left + width / 2, clientY: shell.getBoundingClientRect().top + 100});
+    viewer.dispatchEvent(change);
+    window.__pinchSmooth = shell === document.querySelector('.page-shell') && shell.getBoundingClientRect().width > width && !!document.querySelector('#pages').style.zoom;
+    viewer.dispatchEvent(new Event('gestureend', {bubbles: true, cancelable: true}));
     document.querySelector('#search-toggle').click();
     const input = document.querySelector('#search-input'); input.value = \(query); input.dispatchEvent(new Event('input'));
     return;
@@ -60,6 +69,7 @@ setInterval(() => {
   if (status === 'Searching…' || status === 'Enter text to search.') return;
   window.webkit.messageHandlers.result.postMessage({
     matches: document.querySelectorAll('.search-result').length,
+    pinch: window.__pinchSmooth ? 1 : 0,
     highlights: document.querySelectorAll('.search-match').length,
     fonts: [...document.fonts].filter(font => font.family.startsWith('g_') && font.status === 'loaded').length
   });
