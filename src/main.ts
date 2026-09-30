@@ -10,6 +10,7 @@ import { mountDocumentTabs } from './document-tabs';
 import { type SearchHit } from './search';
 import { searchPdf } from './pdf-search';
 import { renderOutline } from './outline';
+import { selectedMarkup, paintMarkup, overlaps, type Markup, type MarkupKind } from './markup';
 import type { SidebarTab } from './controls';
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
@@ -58,7 +59,22 @@ app.innerHTML = `
       <button class="icon-button" id="zoom-in" aria-label="Zoom in" title="Zoom in">${icon('plus')}</button>
       <button class="icon-button" id="fit-width" aria-label="Fit width" title="Fit width">${icon('fit')}</button>
     </div>
-    <div class="toolbar-right">
+  <div class="toolbar-right">
+      <div class="markup-control document-tool" id="markup-control" hidden>
+        <button class="icon-button" id="markup-toggle" aria-label="Markup selected text" aria-expanded="false" aria-controls="markup-menu" title="Markup selected text">Highlight</button>
+        <div class="markup-menu" id="markup-menu" hidden>
+          <span class="markup-heading">Selected text</span>
+          <div class="markup-colors" aria-label="Highlight color">
+            <button type="button" class="markup-choice markup-yellow" data-markup="yellow" aria-label="Highlight yellow" title="Highlight yellow"></button>
+            <button type="button" class="markup-choice markup-green" data-markup="green" aria-label="Highlight green" title="Highlight green"></button>
+            <button type="button" class="markup-choice markup-blue" data-markup="blue" aria-label="Highlight blue" title="Highlight blue"></button>
+            <button type="button" class="markup-choice markup-pink" data-markup="pink" aria-label="Highlight pink" title="Highlight pink"></button>
+          </div>
+          <button type="button" class="markup-menu-item" data-markup="underline">Underline</button>
+          <button type="button" class="markup-menu-item" data-markup="strike">Strikethrough</button>
+          <button type="button" class="markup-menu-item" data-markup="remove">Remove markup</button>
+        </div>
+      </div>
       <button class="icon-button document-tool" id="rotate" aria-label="Rotate pages" title="Rotate pages" hidden>${icon('rotate')}</button>
       <button class="icon-button document-tool" id="search-toggle" aria-label="Find in document" title="Find in document" hidden>${icon('search')}</button>
       <span class="toolbar-divider"></span>
@@ -140,19 +156,23 @@ let pageObserver: IntersectionObserver | null = null;
 let thumbObserver: IntersectionObserver | null = null;
 const pageRenders = new WeakMap<HTMLElement, { epoch: number; task: Promise<void> }>();
 const renderedText = new WeakMap<HTMLElement, { divs: HTMLElement[]; strings: string[] }>();
+let selectedText: Omit<Markup, 'kind'>[] = [];
+let annotations: Markup[] = [];
+let annotationKey = '';
 
 type DocumentTab = {
   id: string; name: string; path: string | null; pdf: PdfDocument | null; page: number; zoom: number;
   rotation: number; fit: boolean; dimensions: Dimensions[]; top: number; left: number;
   query: string; activeQuery: string; searchPending: boolean; hits: SearchHit[]; selected: number;
   sidebarTab: SidebarTab; thumbnailTop: number; resultsTop: number;
+  annotationKey: string;
 };
 type ZoomPoint = { page: string; x: number; y: number; pageX: number; pageY: number };
 let nextDocumentId = 1;
 function emptyDocumentTab(): DocumentTab {
   return { id: String(nextDocumentId++), name: 'New tab', path: null, pdf: null, page: 1, zoom: 1.25,
     rotation: 0, fit: true, dimensions: [], top: 0, left: 0, query: '', activeQuery: '',
-    searchPending: false, hits: [], selected: -1, sidebarTab: 'pages', thumbnailTop: 0, resultsTop: 0 };
+    searchPending: false, hits: [], selected: -1, sidebarTab: 'pages', thumbnailTop: 0, resultsTop: 0, annotationKey: '' };
 }
 const documentTabs: DocumentTab[] = [emptyDocumentTab()];
 let activeDocumentId = documentTabs[0].id;
@@ -226,6 +246,23 @@ function saveDocumentTab() {
     hits, searchPending: searchRunning, selected: selectedHitIndex, sidebarTab: activeTab,
     thumbnailTop: thumbs.scrollTop, resultsTop: $('#search-results').scrollTop });
 }
+function readAnnotations(key: string): Markup[] {
+  if (!key) return [];
+  try {
+    const stored: unknown = JSON.parse(localStorage.getItem(key) || '[]');
+    return Array.isArray(stored) ? stored.filter((item): item is Markup =>
+      item && typeof item.page === 'number' && Number.isInteger(item.startItem) &&
+      Number.isInteger(item.endItem) && typeof item.startOffset === 'number' &&
+      typeof item.endOffset === 'number' &&
+      ['yellow', 'green', 'blue', 'pink', 'underline', 'strike'].includes(item.kind)) : [];
+  } catch { return []; }
+}
+function repaintAnnotations() {
+  pages.querySelectorAll<HTMLElement>('.page-shell[data-rendered="true"]').forEach(shell => {
+    const text = renderedText.get(shell);
+    if (text) paintMarkup(shell, text, annotations);
+  });
+}
 function activateDocumentTab(id: string) {
   const tab = documentTabs.find(tab => tab.id === id);
   if (!tab || id === activeDocumentId) return;
@@ -241,7 +278,12 @@ function activateDocumentTab(id: string) {
   releaseCanvases(pages); releaseCanvases(thumbs);
   pages.replaceChildren(); thumbs.replaceChildren();
   activeDocumentId = id;
+  selectedText = [];
+  $('#markup-menu').hidden = true;
+  $('#markup-toggle').setAttribute('aria-expanded', 'false');
   pdf = tab.pdf; documentName = tab.name; currentPage = tab.page;
+  annotationKey = tab.annotationKey;
+  annotations = readAnnotations(annotationKey);
   zoom = tab.zoom; rotation = tab.rotation; fitWidth = tab.fit; dimensions = tab.dimensions;
   hits = tab.hits; activeSearchQuery = tab.activeQuery; searchRunning = false;
   selectedHitIndex = tab.selected; selectedHit = hits[selectedHitIndex] || null;
@@ -341,8 +383,9 @@ function updatePageUi(revealThumbnail = false) {
   if (!pdf) return;
   pageNumber.value = String(currentPage);
   $('#page-total').textContent = `/ ${pdf.numPages}`;
-  document.querySelectorAll<HTMLElement>('.thumbnail').forEach((el) => el.classList.toggle('active', Number(el.dataset.page) === currentPage));
-  const active = thumbs.querySelector<HTMLElement>('.thumbnail.active');
+  const previous = thumbs.querySelector<HTMLElement>('.thumbnail.active');
+  const active = thumbs.children.item(currentPage - 1) as HTMLElement | null;
+  if (previous !== active) { previous?.classList.remove('active'); active?.classList.add('active'); }
   if (revealThumbnail && active && activeTab === 'pages') {
     const item = active.getBoundingClientRect();
     const list = thumbs.getBoundingClientRect();
@@ -633,6 +676,7 @@ function highlightVisibleText(shell: HTMLElement) {
     span.replaceChildren(content);
     itemStart = itemEnd;
   });
+  paintMarkup(shell, layer, annotations);
 }
 function scrollToSelectedMatch(shell: HTMLElement) {
   if (!selectedHit) return false;
@@ -799,6 +843,7 @@ async function loadDocument(file: OpenedDocument, saved?: SavedTab) {
     tab.pdf = loaded;
     tab.name = file.name;
     tab.path = file.path;
+    tab.annotationKey = `pdf-markup:${loaded.fingerprints[0] || file.path || file.name}`;
     tab.dimensions = [{ width: viewport.width, height: viewport.height }];
     if (saved) {
       tab.page = Math.max(1, Math.min(loaded.numPages, saved.page));
@@ -956,11 +1001,57 @@ window.addEventListener('storage', event => {
     const invert = event.newValue !== 'false';
     applyInvertImages(invert); themeControls.setInvert(invert);
   }
+  if (event.key === annotationKey) { annotations = readAnnotations(annotationKey); repaintAnnotations(); }
 });
 tabBar = mountDocumentTabs($('#document-tabs-root'), activateDocumentTab, id => { void closeDocumentTab(id); }, newDocumentTab);
 tabBar.update(documentTabs, activeDocumentId);
 $('#new-window').addEventListener('click', () => { void newWindow().catch(error => toast(String(error))); });
 $('#search-toggle').addEventListener('click', () => { setSidebar(true); showTab('search'); });
+function captureSelectedText() {
+  const selection = window.getSelection();
+  if (!pdf || !selection || selection.isCollapsed || !selection.rangeCount) return;
+  const range = selection.getRangeAt(0);
+  const captured: Omit<Markup, 'kind'>[] = [];
+  pages.querySelectorAll<HTMLElement>('.page-shell[data-rendered="true"]').forEach(shell => {
+    if (!range.intersectsNode(shell)) return;
+    const text = renderedText.get(shell);
+    if (!text) return;
+    const item = selectedMarkup(range, shell, text);
+    if (item) captured.push(item);
+  });
+  if (captured.length) selectedText = captured;
+}
+viewer.addEventListener('pointerup', captureSelectedText);
+viewer.addEventListener('keyup', captureSelectedText);
+viewer.addEventListener('pointerdown', () => { selectedText = []; });
+$('#markup-toggle').addEventListener('pointerdown', captureSelectedText);
+$('#markup-toggle').addEventListener('click', () => {
+  const menu = $('#markup-menu');
+  menu.hidden = !menu.hidden;
+  $('#markup-toggle').setAttribute('aria-expanded', String(!menu.hidden));
+});
+$('#markup-menu').addEventListener('click', event => {
+  const button = (event.target as Element).closest<HTMLButtonElement>('[data-markup]');
+  if (!button) return;
+  captureSelectedText();
+  if (!selectedText.length) { toast('Select text in the PDF first.'); return; }
+  const kind = button.dataset.markup as MarkupKind | 'remove';
+  if (kind === 'remove') annotations = annotations.filter(mark => !selectedText.some(item => overlaps(mark, item)));
+  else annotations.push(...selectedText.map(item => ({ ...item, kind })));
+  try { localStorage.setItem(annotationKey, JSON.stringify(annotations)); }
+  catch { toast('Unable to save markup.'); }
+  repaintAnnotations();
+  window.getSelection()?.removeAllRanges();
+  selectedText = [];
+  $('#markup-menu').hidden = true;
+  $('#markup-toggle').setAttribute('aria-expanded', 'false');
+});
+document.addEventListener('pointerdown', event => {
+  if (!(event.target as Element).closest('#markup-control')) {
+    $('#markup-menu').hidden = true;
+    $('#markup-toggle').setAttribute('aria-expanded', 'false');
+  }
+});
 let searchTimer: number | undefined;
 $<HTMLInputElement>('#search-input').addEventListener('input', () => {
   window.clearTimeout(searchTimer);
@@ -980,7 +1071,12 @@ $<HTMLInputElement>('#search-input').addEventListener('input', () => {
 $('#previous-match').addEventListener('click', () => moveSearchHit(-1));
 $('#next-match').addEventListener('click', () => moveSearchHit(1));
 $<HTMLInputElement>('#search-input').addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); moveSearchHit(event.shiftKey ? -1 : 1); } if (event.key === 'Escape') showTab('pages'); });
+let scrollFrame = 0;
+let trimTimer: number | undefined;
 viewer.addEventListener('scroll', () => {
+  if (scrollFrame) return;
+  scrollFrame = requestAnimationFrame(() => {
+  scrollFrame = 0;
   if (!pdf) return;
   const center = viewer.getBoundingClientRect().top + viewer.clientHeight * 0.32;
   let low = 0, high = pages.children.length - 1;
@@ -1001,8 +1097,10 @@ viewer.addEventListener('scroll', () => {
     }, { page: currentPage, gap: Infinity }).page;
   }
   if (nearest !== currentPage) { currentPage = nearest; updatePageUi(); }
-  trimRenderedPages();
   queueSessionSave();
+  window.clearTimeout(trimTimer);
+  trimTimer = window.setTimeout(trimRenderedPages, 180);
+  });
 }, { passive: true });
 new ResizeObserver(() => refreshFitIfNeeded()).observe(viewer);
 window.addEventListener('keydown', event => {

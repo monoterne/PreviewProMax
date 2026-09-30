@@ -68,6 +68,15 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
   border: 0; border-radius: 6px; background: transparent; color: var(--muted);
 }
 .icon-button:not(:disabled):hover, .icon-button.selected { background: var(--surface-hover); color: var(--text); }
+.markup-control { position: relative; }
+.markup-control > .icon-button { width: auto; padding: 0 8px; font-size: 12px; font-weight: 600; }
+.markup-menu { position: absolute; z-index: 20; top: 38px; right: 0; width: 178px; padding: 8px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 4px 14px rgb(0 0 0 / 12%); }
+.markup-heading { display: block; padding: 2px 4px 7px; color: var(--muted); font-size: 11px; }
+.markup-colors { display: flex; gap: 8px; padding: 2px 4px 8px; }
+.markup-choice { width: 26px; height: 26px; border: 1px solid rgb(0 0 0 / 18%); border-radius: 6px; }
+.markup-choice:hover { border-color: var(--accent); }
+.markup-menu-item { display: block; width: 100%; padding: 7px 6px; text-align: left; color: var(--text); background: transparent; border: 0; border-radius: 5px; }
+.markup-menu-item:hover { background: var(--surface-hover); }
 .page-input-wrap { display: flex; align-items: center; gap: 6px; white-space: nowrap; color: var(--muted); }
 .page-input-wrap input { width: 42px; height: 28px; padding: 0 3px; text-align: center; color: var(--text); background: var(--input); border: 1px solid var(--border); border-radius: 5px; appearance: textfield; }
 .page-input-wrap input::-webkit-inner-spin-button { appearance: none; }
@@ -137,13 +146,21 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .pages[data-zoom-preview="true"] .page-shell { zoom: var(--page-preview-scale); }
 .page-shell { position: relative; flex: none; overflow: hidden; isolation: isolate; background: var(--page); box-shadow: var(--page-shadow); }
 .page-content { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
+.markup-layer { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
+.markup-mark { position: absolute; }
+.markup-yellow { background: rgb(255 221 61 / 55%); }
+.markup-green { background: rgb(110 215 143 / 55%); }
+.markup-blue { background: rgb(105 180 255 / 55%); }
+.markup-pink { background: rgb(255 135 185 / 55%); }
+.markup-mark.markup-underline { border-bottom: 2px solid #e98b28; }
+.markup-mark.markup-strike::after { content: ''; position: absolute; top: 50%; left: 0; right: 0; border-top: 2px solid #df6464; }
 .page-shell canvas { display: block; }
 .page-loading { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); background: var(--page-loading); }
 .page-number-label { position: absolute; right: 0; bottom: -22px; color: var(--muted); font-size: 12px; }
 :root[data-theme="dark"][data-invert-images="true"] .page-shell canvas,
 :root[data-theme="dark"][data-invert-images="true"] .thumbnail-paper canvas,
 :root[data-theme="dark"] canvas.dark-filter-fallback { filter: invert(1) hue-rotate(180deg) brightness(1.15); mix-blend-mode: screen; }
-.textLayer { position: absolute; inset: 0; overflow: hidden; opacity: 1; line-height: 1; text-align: initial; user-select: text; transform-origin: 0 0; -webkit-text-size-adjust: none; text-size-adjust: none; --min-font-size: 1; --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size)); --min-font-size-inv: calc(1 / var(--min-font-size)); --scale-round-x: 1px; --scale-round-y: 1px; }
+.textLayer { position: absolute; inset: 0; z-index: 2; overflow: hidden; opacity: 1; line-height: 1; text-align: initial; user-select: text; transform-origin: 0 0; -webkit-text-size-adjust: none; text-size-adjust: none; --min-font-size: 1; --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size)); --min-font-size-inv: calc(1 / var(--min-font-size)); --scale-round-x: 1px; --scale-round-y: 1px; }
 .textLayer span, .textLayer br { color: transparent; position: absolute; white-space: pre; cursor: text; transform-origin: 0 0; }
 .textLayer > :not(.markedContent), .textLayer .markedContent span:not(.markedContent) { font-size: calc(var(--text-scale-factor) * var(--font-height)); --scale-x: 1; --rotate: 0deg; transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv)); }
 .textLayer .markedContent { display: contents; }

@@ -390,6 +390,22 @@ test('scrolling through a long document keeps retained page canvases bounded', a
   }
 });
 
+test('selected text markup survives a page rerender and reload', async ({ page }) => {
+  await page.locator('.page-shell[data-page="1"] .textLayer span').first().evaluate(span => {
+    const range = document.createRange();
+    range.selectNodeContents(span);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    span.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+  });
+  await page.getByRole('button', { name: 'Markup selected text' }).click();
+  await page.getByRole('button', { name: 'Highlight green' }).click();
+  await expect(page.locator('.page-shell[data-page="1"] .markup-mark.markup-green').first()).toBeVisible();
+  await page.reload();
+  await expect(page.locator('.page-shell[data-page="1"] .markup-mark.markup-green').first()).toBeVisible();
+});
+
 
 test('typing still lists and highlights matches after repeatedly switching sidebar views and documents', async ({ page }) => {
   await page.locator('#open-button').click();
