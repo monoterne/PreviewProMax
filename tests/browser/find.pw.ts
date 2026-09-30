@@ -406,6 +406,34 @@ test('selected text markup survives a page rerender and reload', async ({ page }
   await expect(page.locator('.page-shell[data-page="1"] .markup-mark.markup-green').first()).toBeVisible();
 });
 
+test('pencil and shapes persist and the eraser removes a drawing', async ({ page }) => {
+  const choose = async (name: string) => {
+    await page.getByRole('button', { name: /Drawing tools/ }).click();
+    await page.getByRole('button', { name, exact: true }).click();
+  };
+  const draw = async (startX: number, startY: number, endX: number, endY: number) => {
+    const bounds = (await page.locator('.page-shell[data-page="1"] .drawing-layer').boundingBox())!;
+    await page.mouse.move(bounds.x + startX, bounds.y + startY);
+    await page.mouse.down();
+    await page.mouse.move(bounds.x + endX, bounds.y + endY, { steps: 5 });
+    await page.mouse.up();
+  };
+  await choose('Pencil');
+  await draw(40, 40, 110, 80);
+  await choose('Rectangle');
+  await draw(140, 50, 230, 120);
+  await choose('Circle');
+  await draw(250, 50, 330, 130);
+  await expect(page.locator('.page-shell[data-page="1"] .drawing-layer [data-drawing-id]')).toHaveCount(3);
+  await page.getByRole('button', { name: 'Rotate pages' }).click();
+  await expect(page.locator('.page-shell[data-page="1"] .drawing-layer [data-drawing-id]')).toHaveCount(3);
+  await page.reload();
+  await expect(page.locator('.page-shell[data-page="1"] .drawing-layer [data-drawing-id]')).toHaveCount(3);
+  await choose('Eraser');
+  await page.locator('.page-shell[data-page="1"] rect.drawing-hit').click();
+  await expect(page.locator('.page-shell[data-page="1"] .drawing-layer [data-drawing-id]')).toHaveCount(2);
+});
+
 
 test('typing still lists and highlights matches after repeatedly switching sidebar views and documents', async ({ page }) => {
   await page.locator('#open-button').click();

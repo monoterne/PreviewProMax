@@ -11,6 +11,7 @@ import { type SearchHit } from './search';
 import { searchPdf } from './pdf-search';
 import { renderOutline } from './outline';
 import { selectedMarkup, paintMarkup, overlaps, type Markup, type MarkupKind } from './markup';
+import { circleEnd, paintDrawings, pointOnPage, updateDrawing, validDrawing, type Drawing, type DrawingTool, type Point } from './drawings';
 import type { SidebarTab } from './controls';
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
@@ -60,6 +61,30 @@ app.innerHTML = `
       <button class="icon-button" id="fit-width" aria-label="Fit width" title="Fit width">${icon('fit')}</button>
     </div>
   <div class="toolbar-right">
+      <div class="drawing-control document-tool" id="drawing-control" hidden>
+        <button class="icon-button" id="drawing-toggle" aria-label="Drawing tools" aria-expanded="false" aria-controls="drawing-menu" title="Drawing tools">Draw</button>
+        <div class="drawing-menu" id="drawing-menu" hidden>
+          <div class="drawing-tools" aria-label="Drawing tool">
+            <button type="button" data-draw-tool="pencil">Pencil</button>
+            <button type="button" data-draw-tool="rectangle">Rectangle</button>
+            <button type="button" data-draw-tool="circle">Circle</button>
+            <button type="button" data-draw-tool="eraser">Eraser</button>
+          </div>
+          <div class="drawing-options">
+            <span>Color</span>
+            <div class="drawing-colors" aria-label="Drawing color">
+              <button type="button" data-draw-color="#e24b46" aria-label="Red" title="Red"></button>
+              <button type="button" data-draw-color="#2672d9" aria-label="Blue" title="Blue"></button>
+              <button type="button" data-draw-color="#23834b" aria-label="Green" title="Green"></button>
+              <button type="button" data-draw-color="#252525" aria-label="Black" title="Black"></button>
+              <button type="button" data-draw-color="#ffffff" aria-label="White" title="White"></button>
+            </div>
+            <label for="drawing-width">Line width</label>
+            <select id="drawing-width" aria-label="Drawing line width"><option value="2">Thin</option><option value="4" selected>Medium</option><option value="8">Thick</option></select>
+          </div>
+          <button type="button" id="drawing-done" class="drawing-done">Done drawing</button>
+        </div>
+      </div>
       <div class="markup-control document-tool" id="markup-control" hidden>
         <button class="icon-button" id="markup-toggle" aria-label="Markup selected text" aria-expanded="false" aria-controls="markup-menu" title="Markup selected text">Highlight</button>
         <div class="markup-menu" id="markup-menu" hidden>
@@ -79,7 +104,7 @@ app.innerHTML = `
       <button class="icon-button document-tool" id="search-toggle" aria-label="Find in document" title="Find in document" hidden>${icon('search')}</button>
       <span class="toolbar-divider"></span>
       <div id="theme-control"></div>
-      <button id="open-button" class="open-button">${icon('folder', 16)}<span>Open</span></button>
+      <button id="open-button" class="open-button" aria-label="Open PDF">${icon('folder', 16)}<span>Open</span></button>
     </div>
   </header>
   <div class="document-bar"><div id="document-tabs-root"></div><button id="new-window" class="icon-button" aria-label="New window" title="New window (⌘/Ctrl+N)">${icon('window')}</button></div>
@@ -159,6 +184,12 @@ const renderedText = new WeakMap<HTMLElement, { divs: HTMLElement[]; strings: st
 let selectedText: Omit<Markup, 'kind'>[] = [];
 let annotations: Markup[] = [];
 let annotationKey = '';
+let drawings: Drawing[] = [];
+let drawingKey = '';
+let drawingTool: DrawingTool = null;
+let drawingColor = '#e24b46';
+let drawingWidth = 4;
+let activeDrawing: { drawing: Drawing; layer: SVGSVGElement; group: SVGGElement; pointerId: number } | null = null;
 
 type DocumentTab = {
   id: string; name: string; path: string | null; pdf: PdfDocument | null; page: number; zoom: number;
@@ -263,6 +294,22 @@ function repaintAnnotations() {
     if (text) paintMarkup(shell, text, annotations);
   });
 }
+function readDrawings(key: string): Drawing[] {
+  if (!key) return [];
+  try {
+    const stored: unknown = JSON.parse(localStorage.getItem(key) || '[]');
+    return Array.isArray(stored) ? stored.filter(validDrawing) : [];
+  } catch { return []; }
+}
+function repaintDrawings() {
+  pages.querySelectorAll<HTMLElement>('.page-shell[data-rendered="true"]').forEach(shell =>
+    paintDrawings(shell, drawings, rotation, drawingTool));
+}
+function saveDrawings() {
+  try { localStorage.setItem(drawingKey, JSON.stringify(drawings)); }
+  catch { toast('Unable to save drawings.'); }
+  repaintDrawings();
+}
 function activateDocumentTab(id: string) {
   const tab = documentTabs.find(tab => tab.id === id);
   if (!tab || id === activeDocumentId) return;
@@ -279,11 +326,18 @@ function activateDocumentTab(id: string) {
   pages.replaceChildren(); thumbs.replaceChildren();
   activeDocumentId = id;
   selectedText = [];
+  activeDrawing = null;
+  drawingTool = null;
+  $('#drawing-menu').hidden = true;
+  $('#drawing-toggle').setAttribute('aria-expanded', 'false');
+  $('#drawing-toggle').classList.remove('selected');
   $('#markup-menu').hidden = true;
   $('#markup-toggle').setAttribute('aria-expanded', 'false');
   pdf = tab.pdf; documentName = tab.name; currentPage = tab.page;
   annotationKey = tab.annotationKey;
   annotations = readAnnotations(annotationKey);
+  drawingKey = annotationKey.replace(/^pdf-markup:/, 'pdf-drawings:');
+  drawings = readDrawings(drawingKey);
   zoom = tab.zoom; rotation = tab.rotation; fitWidth = tab.fit; dimensions = tab.dimensions;
   hits = tab.hits; activeSearchQuery = tab.activeQuery; searchRunning = false;
   selectedHitIndex = tab.selected; selectedHit = hits[selectedHitIndex] || null;
@@ -620,6 +674,7 @@ async function renderPageContent(shell: HTMLElement, epoch: number) {
     shell.dataset.rendered = 'true';
     shell.dataset.renderedZoom = String(zoom);
     highlightVisibleText(shell);
+    paintDrawings(shell, drawings, rotation, drawingTool);
   } catch (error) {
     if (epoch === renderEpoch) shell.querySelector('.page-loading')?.replaceChildren('Unable to render this page');
     console.error(error);
@@ -1002,6 +1057,7 @@ window.addEventListener('storage', event => {
     applyInvertImages(invert); themeControls.setInvert(invert);
   }
   if (event.key === annotationKey) { annotations = readAnnotations(annotationKey); repaintAnnotations(); }
+  if (event.key === drawingKey) { drawings = readDrawings(drawingKey); repaintDrawings(); }
 });
 tabBar = mountDocumentTabs($('#document-tabs-root'), activateDocumentTab, id => { void closeDocumentTab(id); }, newDocumentTab);
 tabBar.update(documentTabs, activeDocumentId);
@@ -1052,6 +1108,107 @@ document.addEventListener('pointerdown', event => {
     $('#markup-toggle').setAttribute('aria-expanded', 'false');
   }
 });
+function setDrawingTool(tool: DrawingTool) {
+  if (activeDrawing) {
+    activeDrawing.group.remove();
+    if (activeDrawing.layer.hasPointerCapture(activeDrawing.pointerId)) activeDrawing.layer.releasePointerCapture(activeDrawing.pointerId);
+  }
+  activeDrawing = null;
+  drawingTool = tool;
+  $('#drawing-toggle').classList.toggle('selected', !!tool);
+  $('#drawing-toggle').setAttribute('aria-label', tool ? `Drawing tools: ${tool} active` : 'Drawing tools');
+  document.querySelectorAll<HTMLButtonElement>('[data-draw-tool]').forEach(button => {
+    button.setAttribute('aria-pressed', String(button.dataset.drawTool === tool));
+  });
+  repaintDrawings();
+}
+$('#drawing-toggle').addEventListener('click', () => {
+  const menu = $('#drawing-menu');
+  menu.hidden = !menu.hidden;
+  $('#drawing-toggle').setAttribute('aria-expanded', String(!menu.hidden));
+});
+$('#drawing-menu').addEventListener('click', event => {
+  const button = (event.target as Element).closest<HTMLButtonElement>('[data-draw-tool], [data-draw-color], #drawing-done');
+  if (!button) return;
+  if (button.dataset.drawTool) {
+    setDrawingTool(button.dataset.drawTool === drawingTool ? null : button.dataset.drawTool as DrawingTool);
+    $('#drawing-menu').hidden = true;
+    $('#drawing-toggle').setAttribute('aria-expanded', 'false');
+  } else if (button.dataset.drawColor) {
+    drawingColor = button.dataset.drawColor;
+    document.querySelectorAll<HTMLButtonElement>('[data-draw-color]').forEach(color =>
+      color.setAttribute('aria-pressed', String(color.dataset.drawColor === drawingColor)));
+  } else {
+    setDrawingTool(null);
+    $('#drawing-menu').hidden = true;
+    $('#drawing-toggle').setAttribute('aria-expanded', 'false');
+  }
+});
+$<HTMLSelectElement>('#drawing-width').addEventListener('change', event => {
+  drawingWidth = Number((event.target as HTMLSelectElement).value);
+});
+document.querySelectorAll<HTMLButtonElement>('[data-draw-color]').forEach(button => {
+  button.style.backgroundColor = button.dataset.drawColor!;
+  button.setAttribute('aria-pressed', String(button.dataset.drawColor === drawingColor));
+});
+document.addEventListener('pointerdown', event => {
+  if (!(event.target as Element).closest('#drawing-control')) {
+    $('#drawing-menu').hidden = true;
+    $('#drawing-toggle').setAttribute('aria-expanded', 'false');
+  }
+});
+pages.addEventListener('pointerdown', event => {
+  if (!drawingTool || (event.button !== 0 && event.pointerType !== 'touch')) return;
+  const layer = (event.target as Element).closest<SVGSVGElement>('.drawing-layer');
+  if (!layer) return;
+  event.preventDefault();
+  if (drawingTool === 'eraser') {
+    const id = (event.target as Element).closest<SVGGElement>('[data-drawing-id]')?.dataset.drawingId;
+    if (id) { drawings = drawings.filter(drawing => drawing.id !== id); saveDrawings(); }
+    return;
+  }
+  const shell = layer.closest<HTMLElement>('.page-shell')!;
+  const start = pointOnPage(event, layer);
+  const drawing: Drawing = { id: crypto.randomUUID(), page: Number(shell.dataset.page), kind: drawingTool,
+    points: drawingTool === 'pencil' ? [start] : [start, start], rotation, color: drawingColor, width: drawingWidth };
+  const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+  group.classList.add('drawing-preview');
+  updateDrawing(group, drawing, rotation);
+  layer.appendChild(group);
+  activeDrawing = { drawing, layer, group, pointerId: event.pointerId };
+  layer.setPointerCapture(event.pointerId);
+});
+pages.addEventListener('pointermove', event => {
+  const active = activeDrawing;
+  if (!active || active.pointerId !== event.pointerId) return;
+  event.preventDefault();
+  const coalesced = active.drawing.kind === 'pencil' ? event.getCoalescedEvents?.() : undefined;
+  const samples = coalesced?.length ? coalesced : [event];
+  for (const sample of samples) {
+    let point = pointOnPage(sample, active.layer);
+    if (active.drawing.kind === 'circle') point = circleEnd(active.drawing.points[0], point, active.layer);
+    if (active.drawing.kind === 'pencil') {
+      const last = active.drawing.points.at(-1)!;
+      if (active.drawing.points.length < 10000 && Math.hypot(point[0] - last[0], point[1] - last[1]) > 0.0005)
+        active.drawing.points.push(point);
+    } else active.drawing.points[1] = point;
+  }
+  updateDrawing(active.group, active.drawing, rotation);
+});
+function finishDrawing(event: PointerEvent, cancel = false) {
+  const active = activeDrawing;
+  if (!active || active.pointerId !== event.pointerId) return;
+  activeDrawing = null;
+  if (active.layer.hasPointerCapture(event.pointerId)) active.layer.releasePointerCapture(event.pointerId);
+  active.group.remove();
+  if (cancel) return;
+  const [start, end = start] = active.drawing.points;
+  if (active.drawing.kind !== 'pencil' && Math.hypot(end[0] - start[0], end[1] - start[1]) < 0.002) return;
+  drawings.push(active.drawing);
+  saveDrawings();
+}
+pages.addEventListener('pointerup', event => finishDrawing(event));
+pages.addEventListener('pointercancel', event => finishDrawing(event, true));
 let searchTimer: number | undefined;
 $<HTMLInputElement>('#search-input').addEventListener('input', () => {
   window.clearTimeout(searchTimer);
@@ -1104,6 +1261,7 @@ viewer.addEventListener('scroll', () => {
 }, { passive: true });
 new ResizeObserver(() => refreshFitIfNeeded()).observe(viewer);
 window.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && drawingTool) { setDrawingTool(null); return; }
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'n') { event.preventDefault(); void newWindow().catch(error => toast(String(error))); return; }
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 't') { event.preventDefault(); newDocumentTab(); return; }
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'w') { event.preventDefault(); void closeDocumentTab(activeDocumentId); return; }
