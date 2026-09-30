@@ -1,12 +1,19 @@
-name: Build desktop apps
+name: "ci: Desktop builds"
+run-name: "ci: Desktop builds"
 
 on:
   workflow_dispatch:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
 
 jobs:
   package:
+    name: "ci: Package ${{ matrix.target }}"
     strategy:
       fail-fast: false
       matrix:

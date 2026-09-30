@@ -2,6 +2,13 @@
 
 Preview Pro Max is a desktop PDF viewer built with Tauri 2, Bun, TypeScript, Tailwind CSS, and PDF.js. Bun installs dependencies and builds the web UI. Rust builds the native shell. Released apps must not embed Node, Bun, or Chromium.
 
+## Commit and workflow names
+
+- Give every commit subject and workflow run a short, clear type-prefixed name, such as `feat: Add page bookmarks`, `fix: Restore PDF search`, `docs: Explain downloads`, `ci: Test dependency updates`, or `chore: Update Bun packages`.
+- Aim for six words or fewer. Clarity takes priority over an exact count. Use one line without filler.
+- Set an explicit workflow `run-name` so Actions does not display a long generated pull request title. Configure Dependabot commit prefixes, and review its generated subjects before merging.
+- Run the desktop workflow on pushes and pull requests to `main`, including Dependabot pull requests. Keep its token read-only and test the production build on both platforms before merging dependency updates.
+
 Run `bun run typecheck`, `bun test`, and `bun run build:web` after renderer changes. Run `bun run dist:mac` on macOS or `bun run dist:win` on Windows after native, packaging, or dependency changes. Verify the GitHub Actions artifacts on both platforms before claiming release support.
 Use current GitHub Actions versions that run on Node 24; do not add Node 20 actions or a Node.js setup step. Keep Bun as the package manager and frontend build tool, and keep application code in TypeScript or Rust.
 
