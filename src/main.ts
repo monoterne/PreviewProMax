@@ -117,6 +117,8 @@ let zoom = 1.25;
 let wheelZoom: number | null = null;
 let wheelZoomTimer: number | undefined;
 let pinchStartZoom = 0;
+let previewZoom: number | null = null;
+let previewAnchor: ZoomPoint | null = null;
 let rotation = 0;
 let sidebarVisible = true;
 let dimensions: Dimensions[] = [];
@@ -145,6 +147,7 @@ type DocumentTab = {
   query: string; activeQuery: string; searchPending: boolean; hits: SearchHit[]; selected: number;
   sidebarTab: SidebarTab; thumbnailTop: number; resultsTop: number;
 };
+type ZoomPoint = { page: string; x: number; y: number; pageX: number; pageY: number };
 let nextDocumentId = 1;
 function emptyDocumentTab(): DocumentTab {
   return { id: String(nextDocumentId++), name: 'New tab', path: null, pdf: null, page: 1, zoom: 1.25,
@@ -226,6 +229,7 @@ function saveDocumentTab() {
 function activateDocumentTab(id: string) {
   const tab = documentTabs.find(tab => tab.id === id);
   if (!tab || id === activeDocumentId) return;
+  commitZoomPreview();
   saveDocumentTab();
   wheelZoom = null;
   pinchStartZoom = 0;
@@ -348,6 +352,7 @@ function updatePageUi(revealThumbnail = false) {
 }
 async function goToPage(number: number) {
   if (!pdf) return;
+  commitZoomPreview();
   const sourcePdf = pdf;
   const target = Math.max(1, Math.min(pdf.numPages, Math.round(number) || 1));
   const epoch = ++navigationEpoch;
@@ -387,40 +392,72 @@ function scaleForFit() {
 }
 let fitWidth = true;
 function refreshFitIfNeeded() { if (fitWidth) setZoom(scaleForFit(), true); }
-function setZoom(value: number, keepFit = false, anchor?: { x: number; y: number }) {
-  if (!pdf) return;
-  if (!anchor) wheelZoom = null;
-  const next = Math.max(0.4, Math.min(3, Math.round(value * 20) / 20));
-  if (Math.abs(next - zoom) < 0.001 && keepFit === fitWidth) return;
-  const shells = Array.from(pages.querySelectorAll<HTMLElement>('.page-shell'));
-  const anchoredPage = anchor && shells.reduce<HTMLElement | null>((nearest, shell) => {
-    if (!nearest) return shell;
+function captureZoomPoint(x: number, y: number): ZoomPoint | null {
+  const hit = document.elementFromPoint(x, y)?.closest<HTMLElement>('.page-shell');
+  const nearby = [currentPage - 1, currentPage, currentPage + 1]
+    .map(page => pages.children.item(page - 1))
+    .filter((element): element is HTMLElement => element instanceof HTMLElement);
+  const shell = hit && pages.contains(hit) ? hit : nearby.reduce<HTMLElement | null>((nearest, candidate) => {
+    if (!nearest) return candidate;
     const distance = (element: HTMLElement) => {
       const rect = element.getBoundingClientRect();
-      return Math.max(rect.top - anchor.y, anchor.y - rect.bottom, 0);
+      return Math.max(rect.top - y, y - rect.bottom, 0);
     };
-    return distance(shell) < distance(nearest) ? shell : nearest;
+    return distance(candidate) < distance(nearest) ? candidate : nearest;
   }, null);
-  const before = anchoredPage?.getBoundingClientRect();
-  const anchorPage = anchoredPage && before && anchor ? {
-    number: anchoredPage.dataset.page,
-    x: Math.max(0, Math.min(1, (anchor.x - before.left) / before.width)),
-    y: Math.max(0, Math.min(1, (anchor.y - before.top) / before.height)),
-  } : null;
+  if (!shell) return null;
+  const rect = shell.getBoundingClientRect();
+  return { page: shell.dataset.page!, x, y,
+    pageX: Math.max(0, Math.min(1, (x - rect.left) / rect.width)),
+    pageY: Math.max(0, Math.min(1, (y - rect.top) / rect.height)) };
+}
+function restoreZoomPoint(point: ZoomPoint | null) {
+  if (!point) return;
+  const shell = pages.querySelector<HTMLElement>(`.page-shell[data-page="${point.page}"]`);
+  if (!shell) return;
+  const rect = shell.getBoundingClientRect();
+  viewer.scrollLeft += rect.left + rect.width * point.pageX - point.x;
+  viewer.scrollTop += rect.top + rect.height * point.pageY - point.y;
+}
+function previewScale(value: number, x: number, y: number) {
+  if (!pdf) return;
+  const next = Math.max(0.4, Math.min(3, value));
+  if (Math.abs(next - (previewZoom ?? zoom)) < 0.0001) return;
+  const point = captureZoomPoint(x, y);
+  previewZoom = next;
+  previewAnchor = point;
+  pages.style.zoom = String(next / zoom);
+  zoomLabel.textContent = `${Math.round(next * 100)}%`;
+  fitWidth = false;
+  $('#fit-width').classList.remove('selected');
+  restoreZoomPoint(point);
+}
+function commitZoomPreview() {
+  if (previewZoom === null) return;
+  const next = previewZoom;
+  const point = previewAnchor;
+  previewZoom = null;
+  previewAnchor = null;
+  wheelZoom = null;
+  pinchStartZoom = 0;
+  window.clearTimeout(wheelZoomTimer);
+  pages.style.zoom = '';
+  restoreZoomPoint(point);
+  setZoom(next, false, point ? { x: point.x, y: point.y } : undefined, true);
+}
+function setZoom(value: number, keepFit = false, anchor?: { x: number; y: number }, precise = false) {
+  if (!pdf) return;
+  if (previewZoom !== null) commitZoomPreview();
+  const next = Math.max(0.4, Math.min(3, precise ? value : Math.round(value * 20) / 20));
+  if (Math.abs(next - zoom) < 0.0001 && keepFit === fitWidth) return;
+  const point = anchor ? captureZoomPoint(anchor.x, anchor.y) : null;
   fitWidth = keepFit;
   zoom = next;
   zoomLabel.textContent = `${Math.round(zoom * 100)}%`;
   $('#fit-width').classList.toggle('selected', fitWidth);
   rebuildPages();
   queueSessionSave();
-  if (anchorPage && anchor) {
-    const shell = pages.querySelector<HTMLElement>(`.page-shell[data-page="${anchorPage.number}"]`);
-    if (shell) {
-      const after = shell.getBoundingClientRect();
-      viewer.scrollLeft += after.left + after.width * anchorPage.x - anchor.x;
-      viewer.scrollTop += after.top + after.height * anchorPage.y - anchor.y;
-    }
-  }
+  restoreZoomPoint(point);
 }
 function updatePageSizes() {
   pages.querySelectorAll<HTMLElement>('.page-shell').forEach((shell, index) => {
@@ -830,43 +867,47 @@ $('#previous-page').addEventListener('click', () => goToPage(currentPage - 1));
 $('#next-page').addEventListener('click', () => goToPage(currentPage + 1));
 pageNumber.addEventListener('change', () => goToPage(Number(pageNumber.value)));
 pageNumber.addEventListener('keydown', event => { if (event.key === 'Enter') { goToPage(Number(pageNumber.value)); pageNumber.blur(); } });
-$('#zoom-in').addEventListener('click', () => setZoom(zoom + 0.15));
-$('#zoom-out').addEventListener('click', () => setZoom(zoom - 0.15));
-$('#fit-width').addEventListener('click', () => setZoom(scaleForFit(), true));
+$('#zoom-in').addEventListener('click', () => { commitZoomPreview(); setZoom(zoom + 0.15); });
+$('#zoom-out').addEventListener('click', () => { commitZoomPreview(); setZoom(zoom - 0.15); });
+$('#fit-width').addEventListener('click', () => { commitZoomPreview(); setZoom(scaleForFit(), true); });
 viewer.addEventListener('wheel', event => {
   if (!pdf || !(event.ctrlKey || event.metaKey)) return;
   event.preventDefault();
   if (pinchStartZoom) return;
   const pixels = event.deltaY * (event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? viewer.clientHeight : 1);
-  wheelZoom = Math.max(0.4, Math.min(3, (wheelZoom ?? zoom) * Math.exp(-pixels / 400)));
-  setZoom(wheelZoom, false, { x: event.clientX, y: event.clientY });
+  wheelZoom = Math.max(0.4, Math.min(3, (wheelZoom ?? previewZoom ?? zoom) * Math.exp(-pixels / 400)));
+  previewScale(wheelZoom, event.clientX, event.clientY);
   window.clearTimeout(wheelZoomTimer);
-  wheelZoomTimer = window.setTimeout(() => { wheelZoom = null; }, 180);
+  wheelZoomTimer = window.setTimeout(commitZoomPreview, 400);
 }, { passive: false });
 // WKWebView reports trackpad pinches as gesture events on some macOS versions.
 type PinchEvent = Event & { scale: number; clientX: number; clientY: number };
 viewer.addEventListener('gesturestart', event => {
   if (!pdf) return;
   event.preventDefault();
-  pinchStartZoom = zoom;
+  window.clearTimeout(wheelZoomTimer);
+  pinchStartZoom = previewZoom ?? zoom;
 });
 viewer.addEventListener('gesturechange', event => {
   if (!pdf) return;
   event.preventDefault();
   const pinch = event as PinchEvent;
   if (pinchStartZoom && Number.isFinite(pinch.scale) && pinch.scale > 0) {
-    setZoom(pinchStartZoom * pinch.scale, false, { x: pinch.clientX, y: pinch.clientY });
+    previewScale(pinchStartZoom * pinch.scale, pinch.clientX, pinch.clientY);
   }
 });
-viewer.addEventListener('gestureend', event => { event.preventDefault(); pinchStartZoom = 0; });
-$('#rotate').addEventListener('click', () => { rotation = (rotation + 90) % 360; if (fitWidth) zoom = scaleForFit(); rebuildPages(); makeThumbnails(); zoomLabel.textContent = `${Math.round(zoom * 100)}%`; queueSessionSave(); });
+viewer.addEventListener('gestureend', event => { event.preventDefault(); pinchStartZoom = 0; commitZoomPreview(); });
+window.addEventListener('blur', commitZoomPreview);
+$('#rotate').addEventListener('click', () => { commitZoomPreview(); rotation = (rotation + 90) % 360; if (fitWidth) zoom = scaleForFit(); rebuildPages(); makeThumbnails(); zoomLabel.textContent = `${Math.round(zoom * 100)}%`; queueSessionSave(); });
 function applyDarkMode(dark: boolean) {
+  commitZoomPreview();
   const wasPreservingImages = darkMode && !invertImages;
   darkMode = dark;
   document.documentElement.dataset.theme = dark ? 'dark' : 'light';
   if (pdf && (wasPreservingImages || (dark && !invertImages))) { rebuildPages(); makeThumbnails(); }
 }
 function applyInvertImages(invert: boolean) {
+  commitZoomPreview();
   if (invert === invertImages) return;
   invertImages = invert;
   document.documentElement.dataset.invertImages = String(invert);
@@ -914,12 +955,23 @@ $<HTMLInputElement>('#search-input').addEventListener('keydown', event => { if (
 viewer.addEventListener('scroll', () => {
   if (!pdf) return;
   const center = viewer.getBoundingClientRect().top + viewer.clientHeight * 0.32;
-  let nearest = currentPage, distance = Infinity;
-  pages.querySelectorAll<HTMLElement>('.page-shell').forEach(shell => {
-    const rect = shell.getBoundingClientRect();
-    const gap = Math.max(rect.top - center, center - rect.bottom, 0);
-    if (gap < distance) { distance = gap; nearest = Number(shell.dataset.page); }
-  });
+  let low = 0, high = pages.children.length - 1;
+  let nearest = currentPage;
+  while (low <= high) {
+    const middle = (low + high) >>> 1;
+    const rect = pages.children[middle].getBoundingClientRect();
+    if (rect.bottom < center) low = middle + 1;
+    else if (rect.top > center) high = middle - 1;
+    else { nearest = middle + 1; break; }
+  }
+  if (low > high) {
+    const candidates = [high, low].filter(index => index >= 0 && index < pages.children.length);
+    nearest = candidates.reduce((best, index) => {
+      const rect = pages.children[index].getBoundingClientRect();
+      const gap = Math.max(rect.top - center, center - rect.bottom, 0);
+      return gap < best.gap ? { page: index + 1, gap } : best;
+    }, { page: currentPage, gap: Infinity }).page;
+  }
   if (nearest !== currentPage) { currentPage = nearest; updatePageUi(); }
   trimRenderedPages();
   queueSessionSave();
@@ -937,8 +989,8 @@ window.addEventListener('keydown', event => {
   }
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'o') { event.preventDefault(); pickDocument(); }
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'f') { event.preventDefault(); if (pdf) { setSidebar(true); showTab('search'); } }
-  if ((event.metaKey || event.ctrlKey) && (event.key === '+' || event.key === '=')) { event.preventDefault(); setZoom(zoom + 0.15); }
-  if ((event.metaKey || event.ctrlKey) && event.key === '-') { event.preventDefault(); setZoom(zoom - 0.15); }
+  if ((event.metaKey || event.ctrlKey) && (event.key === '+' || event.key === '=')) { event.preventDefault(); commitZoomPreview(); setZoom(zoom + 0.15); }
+  if ((event.metaKey || event.ctrlKey) && event.key === '-') { event.preventDefault(); commitZoomPreview(); setZoom(zoom - 0.15); }
   if (event.defaultPrevented || (event.target instanceof Element && event.target.closest('input, textarea, button, [role=tab], [contenteditable=true]'))) return;
   if (event.key === 'ArrowRight' || event.key === 'PageDown') { event.preventDefault(); goToPage(currentPage + 1); }
   if (event.key === 'ArrowLeft' || event.key === 'PageUp') { event.preventDefault(); goToPage(currentPage - 1); }

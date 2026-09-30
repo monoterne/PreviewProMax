@@ -87,6 +87,59 @@ test('pinch and modified mouse wheel zoom the page around the pointer', async ({
   await expect(page.locator('#zoom-label')).not.toHaveText(wheelZoom!);
 });
 
+test('trackpad pinch updates the page continuously before the gesture ends', async ({ page }) => {
+  const result = await page.evaluate(() => {
+    const viewer = document.querySelector('#viewer')!;
+    const pages = document.querySelector<HTMLElement>('#pages')!;
+    const shell = document.querySelector<HTMLElement>('.page-shell')!;
+    const canvas = shell.querySelector('canvas');
+    const rect = shell.getBoundingClientRect();
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 3;
+    const widths = [rect.width];
+    viewer.dispatchEvent(new Event('gesturestart', { bubbles: true, cancelable: true }));
+    for (const scale of [1.013, 1.027, 1.041]) {
+      const change = new Event('gesturechange', { bubbles: true, cancelable: true });
+      Object.assign(change, { scale, clientX: x, clientY: y });
+      viewer.dispatchEvent(change);
+      widths.push(shell.getBoundingClientRect().width);
+    }
+    const samePage = shell === document.querySelector('.page-shell');
+    const sameCanvas = canvas === shell.querySelector('canvas');
+    const previewZoom = pages.style.zoom;
+    const previewLabel = document.querySelector('#zoom-label')!.textContent;
+    viewer.dispatchEvent(new Event('gestureend', { bubbles: true, cancelable: true }));
+    return { widths, samePage, sameCanvas, previewZoom, previewLabel, committedZoom: pages.style.zoom,
+      rebuilt: shell !== document.querySelector('.page-shell') };
+  });
+  expect(result.widths[1]).toBeGreaterThan(result.widths[0]);
+  expect(result.widths[2]).toBeGreaterThan(result.widths[1]);
+  expect(result.widths[3]).toBeGreaterThan(result.widths[2]);
+  expect(result.samePage && result.sameCanvas).toBe(true);
+  expect(result.previewZoom).not.toBe('');
+  expect(result.committedZoom).toBe('');
+  expect(result.rebuilt).toBe(true);
+  await expect(page.locator('#zoom-label')).toHaveText(result.previewLabel!);
+
+  const wheel = await page.evaluate(() => {
+    const viewer = document.querySelector('#viewer')!;
+    const shell = document.querySelector<HTMLElement>('.page-shell')!;
+    const rect = shell.getBoundingClientRect();
+    const widths = [rect.width];
+    for (let i = 0; i < 3; i++) {
+      viewer.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, ctrlKey: true,
+        deltaY: -4, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 3 }));
+      widths.push(shell.getBoundingClientRect().width);
+    }
+    return { widths, samePage: shell === document.querySelector('.page-shell') };
+  });
+  expect(wheel.samePage).toBe(true);
+  expect(wheel.widths[1]).toBeGreaterThan(wheel.widths[0]);
+  expect(wheel.widths[2]).toBeGreaterThan(wheel.widths[1]);
+  expect(wheel.widths[3]).toBeGreaterThan(wheel.widths[2]);
+  await expect.poll(() => page.locator('#pages').evaluate(el => (el as HTMLElement).style.zoom)).toBe('');
+});
+
 test('open tabs are saved and listed on an empty tab', async ({ page }) => {
   await page.locator('.thumbnail[data-page="4"]').click();
   await page.locator('#zoom-in').click();
