@@ -106,20 +106,26 @@ test('trackpad pinch updates the page continuously before the gesture ends', asy
     }
     const samePage = shell === document.querySelector('.page-shell');
     const sameCanvas = canvas === shell.querySelector('canvas');
-    const previewZoom = pages.style.zoom;
+    const previewZoom = pages.style.getPropertyValue('--page-preview-scale');
     const previewLabel = document.querySelector('#zoom-label')!.textContent;
     viewer.dispatchEvent(new Event('gestureend', { bubbles: true, cancelable: true }));
-    return { widths, samePage, sameCanvas, previewZoom, previewLabel, committedZoom: pages.style.zoom,
-      rebuilt: shell !== document.querySelector('.page-shell') };
+    (window as any).__zoomCanvas = canvas;
+    return { widths, samePage, sameCanvas, previewZoom, previewLabel,
+      previewEnded: pages.dataset.zoomPreview === undefined,
+      pageKept: shell === document.querySelector('.page-shell'),
+      canvasKept: canvas === shell.querySelector('canvas') && !!canvas?.width,
+      loadingShown: !!shell.querySelector('.page-loading') };
   });
   expect(result.widths[1]).toBeGreaterThan(result.widths[0]);
   expect(result.widths[2]).toBeGreaterThan(result.widths[1]);
   expect(result.widths[3]).toBeGreaterThan(result.widths[2]);
   expect(result.samePage && result.sameCanvas).toBe(true);
   expect(result.previewZoom).not.toBe('');
-  expect(result.committedZoom).toBe('');
-  expect(result.rebuilt).toBe(true);
+  expect(result.previewEnded).toBe(true);
+  expect(result.pageKept && result.canvasKept).toBe(true);
+  expect(result.loadingShown).toBe(false);
   await expect(page.locator('#zoom-label')).toHaveText(result.previewLabel!);
+  await expect.poll(() => page.evaluate(() => document.querySelector('.page-shell canvas') !== (window as any).__zoomCanvas)).toBe(true);
 
   const wheel = await page.evaluate(() => {
     const viewer = document.querySelector('#viewer')!;
@@ -137,7 +143,64 @@ test('trackpad pinch updates the page continuously before the gesture ends', asy
   expect(wheel.widths[1]).toBeGreaterThan(wheel.widths[0]);
   expect(wheel.widths[2]).toBeGreaterThan(wheel.widths[1]);
   expect(wheel.widths[3]).toBeGreaterThan(wheel.widths[2]);
-  await expect.poll(() => page.locator('#pages').evaluate(el => (el as HTMLElement).style.zoom)).toBe('');
+  await expect.poll(() => page.locator('#pages').evaluate(el => (el as HTMLElement).dataset.zoomPreview)).toBeUndefined();
+});
+
+test('pinching a later page keeps the same document point in place', async ({ page }) => {
+  await page.locator('.thumbnail[data-page="12"]').click();
+  const shell = page.locator('.page-shell[data-page="12"]');
+  await expect(shell.locator('canvas')).toBeVisible();
+  const positions = await page.evaluate(() => {
+    const viewer = document.querySelector('#viewer')!;
+    const shell = document.querySelector<HTMLElement>('.page-shell[data-page="12"]')!;
+    const rect = shell.getBoundingClientRect();
+    const x = rect.left + rect.width * 0.5;
+    const y = rect.top + rect.height * 0.4;
+    const offsets: { x: number; y: number; top: number; left: number }[] = [];
+    const record = () => {
+      const current = shell.getBoundingClientRect();
+      offsets.push({ x: current.left + current.width * 0.5 - x, y: current.top + current.height * 0.4 - y,
+        top: viewer.scrollTop, left: viewer.scrollLeft });
+    };
+    viewer.dispatchEvent(new Event('gesturestart', { bubbles: true, cancelable: true }));
+    for (const scale of [1.08, 1.16, 1.09, 1.22, 1.19]) {
+      const change = new Event('gesturechange', { bubbles: true, cancelable: true });
+      Object.assign(change, { scale, clientX: x, clientY: y });
+      viewer.dispatchEvent(change);
+      record();
+    }
+    viewer.dispatchEvent(new Event('gestureend', { bubbles: true, cancelable: true }));
+    record();
+    return { offsets, samePage: shell === document.querySelector('.page-shell[data-page="12"]'),
+      canvasVisible: !!shell.querySelector('canvas')?.width };
+  });
+  expect(positions.samePage && positions.canvasVisible).toBe(true);
+  expect(Math.max(...positions.offsets.map(offset => Math.hypot(offset.x, offset.y))), JSON.stringify(positions.offsets)).toBeLessThan(3);
+});
+
+test('a second pinch keeps the page visible while the first render finishes', async ({ page }) => {
+  const result = await page.evaluate(() => {
+    const viewer = document.querySelector('#viewer')!;
+    const shell = document.querySelector<HTMLElement>('.page-shell')!;
+    const canvas = shell.querySelector('canvas');
+    const rect = shell.getBoundingClientRect();
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 3;
+    for (const scale of [1.2, 1.1]) {
+      viewer.dispatchEvent(new Event('gesturestart', { bubbles: true, cancelable: true }));
+      const change = new Event('gesturechange', { bubbles: true, cancelable: true });
+      Object.assign(change, { scale, clientX: x, clientY: y });
+      viewer.dispatchEvent(change);
+      viewer.dispatchEvent(new Event('gestureend', { bubbles: true, cancelable: true }));
+    }
+    (window as any).__oldPinchCanvas = canvas;
+    return { pageKept: shell === document.querySelector('.page-shell'),
+      canvasKept: canvas === shell.querySelector('canvas') && !!canvas?.width,
+      zoom: document.querySelector('#zoom-label')!.textContent };
+  });
+  expect(result.pageKept && result.canvasKept).toBe(true);
+  await expect.poll(() => page.evaluate(() => document.querySelector('.page-shell canvas') !== (window as any).__oldPinchCanvas)).toBe(true);
+  await expect(page.locator('#zoom-label')).toHaveText(result.zoom!);
 });
 
 test('open tabs are saved and listed on an empty tab', async ({ page }) => {

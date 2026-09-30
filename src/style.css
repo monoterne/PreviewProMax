@@ -132,9 +132,11 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .search-snippet mark { color: var(--text); background: rgb(255 193 57 / 38%); border-radius: 2px; }
 .search-result.active .search-result-location { color: var(--accent); }
 
-.viewer { flex: 1; min-width: 0; overflow: auto; position: relative; background: var(--viewer); scrollbar-width: thin; }
+.viewer { flex: 1; min-width: 0; overflow: auto; overflow-anchor: none; position: relative; background: var(--viewer); scrollbar-width: thin; }
 .pages { display: flex; flex-direction: column; align-items: center; gap: 22px; min-height: 100%; padding: 32px 48px 64px; }
+.pages[data-zoom-preview="true"] .page-shell { zoom: var(--page-preview-scale); }
 .page-shell { position: relative; flex: none; overflow: hidden; isolation: isolate; background: var(--page); box-shadow: var(--page-shadow); }
+.page-content { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
 .page-shell canvas { display: block; }
 .page-loading { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); background: var(--page-loading); }
 .page-number-label { position: absolute; right: 0; bottom: -22px; color: var(--muted); font-size: 12px; }

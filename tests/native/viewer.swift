@@ -59,8 +59,10 @@ setInterval(() => {
     const change = new Event('gesturechange', {bubbles: true, cancelable: true});
     Object.assign(change, {scale: 1.1, clientX: shell.getBoundingClientRect().left + width / 2, clientY: shell.getBoundingClientRect().top + 100});
     viewer.dispatchEvent(change);
-    window.__pinchSmooth = shell === document.querySelector('.page-shell') && shell.getBoundingClientRect().width > width && !!document.querySelector('#pages').style.zoom;
+    window.__pinchSmooth = shell === document.querySelector('.page-shell') && shell.getBoundingClientRect().width > width && document.querySelector('#pages').dataset.zoomPreview === 'true';
+    const canvas = shell.querySelector('canvas');
     viewer.dispatchEvent(new Event('gestureend', {bubbles: true, cancelable: true}));
+    window.__pinchSmooth &&= shell.querySelector('canvas') === canvas && !!canvas.width && !shell.querySelector('.page-loading');
     document.querySelector('#search-toggle').click();
     const input = document.querySelector('#search-input'); input.value = \(query); input.dispatchEvent(new Event('input'));
     return;
