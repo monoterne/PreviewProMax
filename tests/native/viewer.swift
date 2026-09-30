@@ -41,6 +41,7 @@ window.__TAURI_INTERNALS__ = {
   metadata: {currentWindow: {label: 'main'}, currentWebview: {label: 'main'}}, transformCallback: () => 1,
   invoke: async command => {
     if (command === 'take_pending_document') { if (consumed) return null; consumed = true; return 'fixture.pdf'; }
+    if (command === 'get_sessions') return {restore: null, recent: []};
     if (command === 'read_document') return Uint8Array.from(atob('\(pdf)'), c => c.charCodeAt(0));
     return 1;
   }

@@ -3,7 +3,7 @@ import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 import './style.css';
-import { pickDocumentPaths, readDocument, onOpenedDocument, onMenuAction, newWindow, closeWindow, windowReady, type OpenedDocument } from './desktop';
+import { pickDocumentPaths, readDocument, onOpenedDocument, onMenuAction, newWindow, closeWindow, windowReady, getSessions, saveSession, archiveSession, type OpenedDocument, type SavedTab, type SavedWindow } from './desktop';
 import { darkenOutsideImages } from './dark-page';
 import { mountSidebarTabs, mountThemeSwitch } from './controls';
 import { mountDocumentTabs } from './document-tabs';
@@ -75,6 +75,10 @@ app.innerHTML = `
         <h1>Open a PDF</h1>
         <button id="welcome-open" class="open-button">${icon('folder', 16)}<span>Choose file</span></button>
         <p>Or drop a PDF here</p>
+        <section id="recent-windows" class="recent-windows" aria-label="Previously open windows" hidden>
+          <h2>Previously open windows</h2>
+          <div id="recent-window-list"></div>
+        </section>
       </div>
       <div id="pages" class="pages" hidden></div>
     </main>
@@ -136,14 +140,14 @@ const pageRenders = new WeakMap<HTMLElement, Promise<void>>();
 const renderedText = new WeakMap<HTMLElement, { divs: HTMLElement[]; strings: string[] }>();
 
 type DocumentTab = {
-  id: string; name: string; pdf: PdfDocument | null; page: number; zoom: number;
+  id: string; name: string; path: string | null; pdf: PdfDocument | null; page: number; zoom: number;
   rotation: number; fit: boolean; dimensions: Dimensions[]; top: number; left: number;
   query: string; activeQuery: string; searchPending: boolean; hits: SearchHit[]; selected: number;
   sidebarTab: SidebarTab; thumbnailTop: number; resultsTop: number;
 };
 let nextDocumentId = 1;
 function emptyDocumentTab(): DocumentTab {
-  return { id: String(nextDocumentId++), name: 'New tab', pdf: null, page: 1, zoom: 1.25,
+  return { id: String(nextDocumentId++), name: 'New tab', path: null, pdf: null, page: 1, zoom: 1.25,
     rotation: 0, fit: true, dimensions: [], top: 0, left: 0, query: '', activeQuery: '',
     searchPending: false, hits: [], selected: -1, sidebarTab: 'pages', thumbnailTop: 0, resultsTop: 0 };
 }
@@ -153,6 +157,62 @@ let tabBar: ReturnType<typeof mountDocumentTabs>;
 const renderJobs = new Set<Promise<void>>();
 let sharedWorker: pdfjs.PDFWorker | undefined;
 let openQueue = Promise.resolve();
+let sessionId: string = crypto.randomUUID();
+let recentWindows: SavedWindow[] = [];
+let restoringSession = false;
+let sessionSaveTimer: number | undefined;
+let sessionWrite = Promise.resolve();
+
+function renderRecentWindows() {
+  const section = $('#recent-windows');
+  const list = $('#recent-window-list');
+  list.replaceChildren();
+  for (const saved of recentWindows.filter(item => item.tabs.length)) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'recent-window';
+    const names = saved.tabs.map(tab => tab.path.split(/[\\/]/).pop() || 'Document');
+    button.textContent = names.length > 3 ? `${names.slice(0, 3).join(', ')} and ${names.length - 3} more` : names.join(', ');
+    button.title = names.join('\n');
+    button.addEventListener('click', () => { void restoreSavedWindow(saved); });
+    list.appendChild(button);
+  }
+  section.hidden = !list.childElementCount;
+}
+
+function mergeRecentWindows(incoming: SavedWindow[]) {
+  const windows = new Map(recentWindows.map(item => [item.id, item]));
+  for (const item of incoming) {
+    if (item.updated >= (windows.get(item.id)?.updated ?? 0)) windows.set(item.id, item);
+  }
+  recentWindows = [...windows.values()].sort((a, b) => b.updated - a.updated).slice(0, 20);
+  if (!pdf) renderRecentWindows();
+}
+
+function refreshRecentWindows() {
+  void getSessions().then(info => mergeRecentWindows(info.recent)).catch(error => console.error('Unable to list previous windows:', error));
+}
+
+function queueSessionSave(delay = 250) {
+  if (restoringSession) return;
+  window.clearTimeout(sessionSaveTimer);
+  sessionSaveTimer = window.setTimeout(() => {
+    saveDocumentTab();
+    const openTabs = documentTabs.filter(tab => tab.pdf && tab.path);
+    const tabs = openTabs.map(tab => ({
+      path: tab.path!, page: tab.page, zoom: tab.zoom, rotation: tab.rotation,
+      fit: tab.fit, top: tab.top, left: tab.left,
+    }));
+    if (!tabs.length) {
+      sessionWrite = sessionWrite.then(archiveSession).catch(error => console.error('Unable to archive open tabs:', error));
+      return;
+    }
+    const session: SavedWindow = { id: sessionId, tabs, active: Math.max(0, openTabs.findIndex(tab => tab.id === activeDocumentId)), updated: Date.now() };
+    sessionWrite = sessionWrite.then(() => saveSession(session)).then(() => {
+      mergeRecentWindows([session]);
+    }).catch(error => console.error('Unable to save open tabs:', error));
+  }, delay);
+}
 
 function saveDocumentTab() {
   const tab = documentTabs.find(tab => tab.id === activeDocumentId);
@@ -185,6 +245,7 @@ function activateDocumentTab(id: string) {
   showTab(tab.sidebarTab, false);
   void renderOutline($('#outline'), pdf, page => goToPage(page));
   $('#welcome').hidden = !!pdf; pages.hidden = !pdf; $('#navigation').hidden = !pdf;
+  if (!pdf) { renderRecentWindows(); refreshRecentWindows(); }
   $<HTMLButtonElement>('#sidebar-toggle').disabled = !pdf;
   document.querySelectorAll<HTMLElement>('.document-tool').forEach(el => el.hidden = !pdf);
   setSidebar(sidebarVisible);
@@ -216,6 +277,7 @@ function activateDocumentTab(id: string) {
       }
     });
   }
+  queueSessionSave(0);
 }
 function newDocumentTab() {
   const tab = emptyDocumentTab();
@@ -229,6 +291,7 @@ async function closeDocumentTab(id: string) {
   const [closed] = documentTabs.splice(index, 1);
   if (activeDocumentId === id) activateDocumentTab(documentTabs[Math.min(index, documentTabs.length - 1)].id);
   else tabBar.update(documentTabs, activeDocumentId);
+  queueSessionSave(0);
   if (closed.pdf) { await Promise.allSettled([...renderJobs]); await closed.pdf.destroy(); }
 }
 
@@ -307,6 +370,7 @@ async function goToPage(number: number) {
   if (pdf !== sourcePdf || epoch !== navigationEpoch) return;
   currentPage = target;
   updatePageUi(true);
+  queueSessionSave();
   const shell = pages.querySelector<HTMLElement>(`.page-shell[data-page="${currentPage}"]`);
   if (shell) {
     const offset = shell.getBoundingClientRect().top - viewer.getBoundingClientRect().top;
@@ -348,6 +412,7 @@ function setZoom(value: number, keepFit = false, anchor?: { x: number; y: number
   zoomLabel.textContent = `${Math.round(zoom * 100)}%`;
   $('#fit-width').classList.toggle('selected', fitWidth);
   rebuildPages();
+  queueSessionSave();
   if (anchorPage && anchor) {
     const shell = pages.querySelector<HTMLElement>(`.page-shell[data-page="${anchorPage.number}"]`);
     if (shell) {
@@ -633,12 +698,12 @@ async function renderThumbnailContent(button: HTMLElement, epoch: number) {
   } catch { /* Keep the placeholder until the page is visible again. */ }
   finally { if (button.dataset.rendered === 'loading') button.dataset.rendered = ''; }
 }
-function openDocument(file: OpenedDocument): Promise<void> {
-  const pending = openQueue.then(() => loadDocument(file));
+function openDocument(file: OpenedDocument, saved?: SavedTab): Promise<void> {
+  const pending = openQueue.then(() => loadDocument(file, saved));
   openQueue = pending.catch(error => toast(String(error)));
   return pending;
 }
-async function loadDocument(file: OpenedDocument) {
+async function loadDocument(file: OpenedDocument, saved?: SavedTab) {
   const bytes = file.bytes instanceof Uint8Array ? file.bytes : new Uint8Array(file.bytes);
   sharedWorker ??= new pdfjs.PDFWorker();
   const task = pdfjs.getDocument({ data: bytes, useSystemFonts: true, worker: sharedWorker });
@@ -668,7 +733,16 @@ async function loadDocument(file: OpenedDocument) {
     const tab = emptyDocumentTab();
     tab.pdf = loaded;
     tab.name = file.name;
+    tab.path = file.path;
     tab.dimensions = [{ width: viewport.width, height: viewport.height }];
+    if (saved) {
+      tab.page = Math.max(1, Math.min(loaded.numPages, saved.page));
+      tab.zoom = Math.max(0.4, Math.min(3, saved.zoom));
+      tab.rotation = saved.rotation % 360;
+      tab.fit = saved.fit;
+      tab.top = saved.top;
+      tab.left = saved.left;
+    }
     // Reuse an empty tab; opening another document keeps the current PDF available.
     if (!pdf) {
       const index = documentTabs.findIndex(item => item.id === activeDocumentId);
@@ -686,6 +760,31 @@ async function pickDocument() {
   try {
     for (const path of await pickDocumentPaths()) await openDocument(await readDocument(path));
   } catch (error) { toast(error instanceof Error ? error.message : 'Unable to open file.'); }
+}
+
+async function restoreSavedWindow(saved: SavedWindow, startup = false) {
+  if (restoringSession) return;
+  if (startup) sessionId = saved.id;
+  restoringSession = true;
+  window.clearTimeout(sessionSaveTimer);
+  const restored: (string | null)[] = [];
+  let unavailable = 0;
+  try {
+    for (const tab of saved.tabs) {
+      const before = activeDocumentId;
+      try { await openDocument(await readDocument(tab.path), tab); }
+      catch { /* A missing file is reported with the other unavailable tabs below. */ }
+      const opened = activeDocumentId === before ? null : activeDocumentId;
+      if (!opened) unavailable++;
+      restored.push(opened);
+    }
+    const target = restored[saved.active] || restored.find(id => id);
+    if (target) activateDocumentTab(target);
+  } finally {
+    restoringSession = false;
+    queueSessionSave();
+  }
+  if (unavailable) toast(`${unavailable} previously open file${unavailable === 1 ? '' : 's'} could not be opened.`, 6000);
 }
 
 async function searchDocument() {
@@ -760,7 +859,7 @@ viewer.addEventListener('gesturechange', event => {
   }
 });
 viewer.addEventListener('gestureend', event => { event.preventDefault(); pinchStartZoom = 0; });
-$('#rotate').addEventListener('click', () => { rotation = (rotation + 90) % 360; if (fitWidth) zoom = scaleForFit(); rebuildPages(); makeThumbnails(); zoomLabel.textContent = `${Math.round(zoom * 100)}%`; });
+$('#rotate').addEventListener('click', () => { rotation = (rotation + 90) % 360; if (fitWidth) zoom = scaleForFit(); rebuildPages(); makeThumbnails(); zoomLabel.textContent = `${Math.round(zoom * 100)}%`; queueSessionSave(); });
 function applyDarkMode(dark: boolean) {
   const wasPreservingImages = darkMode && !invertImages;
   darkMode = dark;
@@ -823,6 +922,7 @@ viewer.addEventListener('scroll', () => {
   });
   if (nearest !== currentPage) { currentPage = nearest; updatePageUi(); }
   trimRenderedPages();
+  queueSessionSave();
 }, { passive: true });
 new ResizeObserver(() => refreshFitIfNeeded()).observe(viewer);
 window.addEventListener('keydown', event => {
@@ -850,6 +950,11 @@ void onMenuAction(action => {
   if (action === 'find' && pdf) { setSidebar(true); showTab('search'); }
 }).catch(error => console.error('Unable to register menu actions:', error));
 onOpenedDocument(openDocument, error => toast(error instanceof Error ? error.message : 'Unable to open file.', 6000));
+void getSessions().then(info => {
+  recentWindows = info.recent;
+  renderRecentWindows();
+  if (info.restore) void restoreSavedWindow(info.restore, true);
+}).catch(error => console.error('Unable to load previous windows:', error));
 let lastDropPath = '';
 let lastDropTime = 0;
 void getCurrentWebview().onDragDropEvent(event => {

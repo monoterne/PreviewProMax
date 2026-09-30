@@ -23,8 +23,11 @@ test.beforeEach(async ({ page }) => {
       __TAURI_INTERNALS__: {
         metadata: { currentWindow: { label: 'main' }, currentWebview: { label: 'main' } },
         transformCallback: () => 1,
-        invoke: async (command: string) => {
-          if (command === 'take_pending_document') { if (consumed) return null; consumed = true; return 'find-fixture.pdf'; }
+        invoke: async (command: string, args?: any) => {
+          if (command === 'take_pending_document') { if (consumed || localStorage.getItem('__skipPending')) return null; consumed = true; return 'find-fixture.pdf'; }
+          if (command === 'get_sessions') return JSON.parse(localStorage.getItem('__testSessions') || '{"restore":null,"recent":[]}');
+          if (command === 'save_session') { (window as any).__savedSession = args?.session; return null; }
+          if (command === 'archive_session') return null;
           if (command === 'plugin:dialog|open') return ['second.pdf', 'third.pdf'];
           if (command === 'new_window') { (window as any).__newWindows = ((window as any).__newWindows || 0) + 1; return 'viewer-1'; }
           if (command === 'read_document') return new Uint8Array(bytes);
@@ -82,6 +85,46 @@ test('pinch and modified mouse wheel zoom the page around the pointer', async ({
     viewer.dispatchEvent(new Event('gestureend', { bubbles: true, cancelable: true }));
   }, before);
   await expect(page.locator('#zoom-label')).not.toHaveText(wheelZoom!);
+});
+
+test('open tabs are saved and listed on an empty tab', async ({ page }) => {
+  await page.locator('.thumbnail[data-page="4"]').click();
+  await page.locator('#zoom-in').click();
+  await expect.poll(() => page.evaluate(() => (window as any).__savedSession?.tabs[0]?.page)).toBe(4);
+  const saved = await page.evaluate(() => (window as any).__savedSession);
+  expect(saved.tabs[0].path).toBe('find-fixture.pdf');
+  expect(saved.tabs[0].zoom).toBeGreaterThan(1);
+  await page.getByRole('button', { name: 'New tab', exact: true }).click();
+  await expect(page.locator('#recent-windows')).toBeVisible();
+  await expect(page.locator('.recent-window')).toContainText('find-fixture.pdf');
+  await page.screenshot({ path: 'test-results/recent-light.png' });
+  await page.locator('#dark-mode-switch').click();
+  await page.screenshot({ path: 'test-results/recent-dark.png' });
+});
+
+test('restores every tab and its active page from a saved window', async ({ page }) => {
+  const saved = {
+    id: 'previous-window', active: 1, updated: Date.now(), tabs: [
+      { path: 'alpha.pdf', page: 5, zoom: 1.5, rotation: 0, fit: false, top: 0, left: 0 },
+      { path: 'beta.pdf', page: 9, zoom: 1.45, rotation: 90, fit: false, top: 0, left: 0 },
+    ],
+  };
+  await page.evaluate(session => {
+    localStorage.setItem('__skipPending', 'true');
+    localStorage.setItem('__testSessions', JSON.stringify({ restore: session, recent: [session] }));
+  }, saved);
+  await page.reload();
+  await expect(page.getByRole('tab', { name: 'alpha.pdf' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'beta.pdf' })).toBeVisible();
+  await expect(page.locator('#page-number')).toHaveValue('9');
+  await expect(page.locator('#zoom-label')).toHaveText('145%');
+  await page.getByRole('tab', { name: 'alpha.pdf' }).click();
+  await expect(page.locator('#page-number')).toHaveValue('5');
+  await expect(page.locator('#zoom-label')).toHaveText('150%');
+  await page.getByRole('button', { name: 'New tab', exact: true }).click();
+  await expect(page.locator('#recent-windows')).toBeVisible();
+  await page.locator('.recent-window').first().click();
+  await expect(page.locator('.document-tab')).toHaveCount(4);
 });
 
 test('find lists all matches and highlights the actual PDF glyphs at the correct scale', async ({ page }) => {

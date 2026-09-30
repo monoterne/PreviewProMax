@@ -2,11 +2,17 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
 
-export type OpenedDocument = { name: string; bytes: Uint8Array };
+export type OpenedDocument = { name: string; path: string; bytes: Uint8Array };
+export type SavedTab = { path: string; page: number; zoom: number; rotation: number; fit: boolean; top: number; left: number };
+export type SavedWindow = { id: string; tabs: SavedTab[]; active: number; updated: number };
+export type SessionInfo = { restore: SavedWindow | null; recent: SavedWindow[] };
+export const getSessions = () => invoke<SessionInfo>('get_sessions');
+export const saveSession = (session: SavedWindow) => invoke<void>('save_session', { session });
+export const archiveSession = () => invoke<void>('archive_session');
 
 export async function readDocument(path: string): Promise<OpenedDocument> {
   const bytes = await invoke<ArrayBuffer>('read_document', { path });
-  return { name: path.split(/[\\/]/).pop() || 'Document', bytes: new Uint8Array(bytes) };
+  return { name: path.split(/[\\/]/).pop() || 'Document', path, bytes: new Uint8Array(bytes) };
 }
 export async function pickDocumentPaths(): Promise<string[]> {
   const paths = await open({ multiple: true, directory: false });
