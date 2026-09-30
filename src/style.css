@@ -34,8 +34,8 @@
   --muted: #a6a9af;
   --accent: #79a8fa;
   --input: #2c2e32;
-  --page: #17191c;
-  --page-loading: #17191c;
+  --page: #232428;
+  --page-loading: #232428;
   --page-shadow: 0 2px 8px rgb(0 0 0 / 25%);
 }
 * { box-sizing: border-box; }
@@ -112,7 +112,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .thumbnail { flex: none; width: 164px; display: flex; flex-direction: column; align-items: center; gap: 7px; padding: 8px; color: var(--muted); background: transparent; border: 1px solid transparent; border-radius: 6px; }
 .thumbnail:hover { background: var(--surface-hover); }
 .thumbnail.active { background: var(--surface-active); border-color: var(--border); color: var(--text); }
-.thumbnail-paper { overflow: hidden; display: grid; place-items: center; background: var(--page); border: 1px solid var(--border); box-shadow: 0 1px 3px rgb(0 0 0 / 10%); }
+.thumbnail-paper { overflow: hidden; display: grid; place-items: center; isolation: isolate; background: var(--page); border: 1px solid var(--border); box-shadow: 0 1px 3px rgb(0 0 0 / 10%); }
 .thumbnail-paper canvas { display: block; max-width: 100%; }
 .thumbnail-placeholder { width: 65%; height: 2px; background: var(--border); box-shadow: 0 14px var(--border), 0 28px var(--border), 0 42px var(--border); }
 .thumbnail-number { font-size: 12px; font-variant-numeric: tabular-nums; }
@@ -134,13 +134,13 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 
 .viewer { flex: 1; min-width: 0; overflow: auto; position: relative; background: var(--viewer); scrollbar-width: thin; }
 .pages { display: flex; flex-direction: column; align-items: center; gap: 22px; min-height: 100%; padding: 32px 48px 64px; }
-.page-shell { position: relative; flex: none; overflow: hidden; background: var(--page); box-shadow: var(--page-shadow); }
+.page-shell { position: relative; flex: none; overflow: hidden; isolation: isolate; background: var(--page); box-shadow: var(--page-shadow); }
 .page-shell canvas { display: block; }
 .page-loading { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); background: var(--page-loading); }
 .page-number-label { position: absolute; right: 0; bottom: -22px; color: var(--muted); font-size: 12px; }
 :root[data-theme="dark"][data-invert-images="true"] .page-shell canvas,
 :root[data-theme="dark"][data-invert-images="true"] .thumbnail-paper canvas,
-:root[data-theme="dark"] canvas.dark-filter-fallback { filter: invert(1) hue-rotate(180deg) brightness(.88) contrast(.9); }
+:root[data-theme="dark"] canvas.dark-filter-fallback { filter: invert(1) hue-rotate(180deg) brightness(1.15); mix-blend-mode: screen; }
 .textLayer { position: absolute; inset: 0; overflow: hidden; opacity: 1; line-height: 1; text-align: initial; user-select: text; transform-origin: 0 0; -webkit-text-size-adjust: none; text-size-adjust: none; --min-font-size: 1; --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size)); --min-font-size-inv: calc(1 / var(--min-font-size)); --scale-round-x: 1px; --scale-round-y: 1px; }
 .textLayer span, .textLayer br { color: transparent; position: absolute; white-space: pre; cursor: text; transform-origin: 0 0; }
 .textLayer > :not(.markedContent), .textLayer .markedContent span:not(.markedContent) { font-size: calc(var(--text-scale-factor) * var(--font-height)); --scale-x: 1; --rotate: 0deg; transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv)); }

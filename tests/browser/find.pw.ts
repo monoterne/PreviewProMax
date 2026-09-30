@@ -120,6 +120,32 @@ test('system theme is the default and image inversion survives a new launch', as
   await expect(page.locator('#invert-images-switch')).toHaveCount(0);
 });
 
+test('dark pages and thumbnails use the ui tint and white text', async ({ page }) => {
+  await page.locator('#dark-mode-switch').click();
+  await page.locator('#invert-images-switch').click();
+  await expect(page.locator('html')).toHaveAttribute('data-invert-images', 'false');
+  await expect(page.locator('.page-shell').first()).toHaveAttribute('data-rendered', 'true');
+  await expect(page.locator('.thumbnail-paper canvas').first()).toBeVisible();
+
+  const colors = await page.evaluate(() => {
+    const pageCanvas = document.querySelector<HTMLCanvasElement>('.page-shell canvas')!;
+    const thumbCanvas = document.querySelector<HTMLCanvasElement>('.thumbnail-paper canvas')!;
+    const pageColor = getComputedStyle(document.documentElement).getPropertyValue('--page').trim();
+    const corner = (canvas: HTMLCanvasElement) => Array.from(canvas.getContext('2d')!.getImageData(canvas.width - 2, canvas.height - 2, 1, 1).data).slice(0, 3);
+    const pixels = pageCanvas.getContext('2d')!.getImageData(0, 0, pageCanvas.width, Math.ceil(pageCanvas.height * .25)).data;
+    let hasWhiteText = false;
+    for (let index = 0; index < pixels.length; index += 4) {
+      if (pixels[index] >= 250 && pixels[index + 1] >= 250 && pixels[index + 2] >= 250) { hasWhiteText = true; break; }
+    }
+    return { pageColor, pageCorner: corner(pageCanvas), thumbCorner: corner(thumbCanvas), hasWhiteText };
+  });
+  const background = [1, 3, 5].map(index => parseInt(colors.pageColor.slice(index, index + 2), 16));
+  expect(colors.pageCorner).toEqual(background);
+  expect(colors.thumbCorner).toEqual(background);
+  expect(colors.hasWhiteText).toBe(true);
+  await page.screenshot({ path: 'test-results/dark-preserve.png' });
+});
+
 test('a replaced query cannot leave stale results or navigate to the previous query', async ({ page }) => {
   await page.locator('#search-toggle').click();
   await page.locator('#search-input').fill('target');

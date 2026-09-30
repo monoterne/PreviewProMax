@@ -3,6 +3,10 @@
 export function darkenOutsideImages(canvas: HTMLCanvasElement, coordinates: ArrayLike<number> | null): void {
   const context = canvas.getContext('2d');
   if (!context) return;
+  const pageColor = getComputedStyle(document.documentElement).getPropertyValue('--page').trim();
+  const pageBackground = /^#[\da-f]{6}$/i.test(pageColor)
+    ? [1, 3, 5].map(index => parseInt(pageColor.slice(index, index + 2), 16))
+    : [35, 36, 40];
   const { width, height } = canvas;
   const stripHeight = Math.min(128, height);
   const mask = coordinates?.length ? document.createElement('canvas') : null;
@@ -41,9 +45,9 @@ export function darkenOutsideImages(canvas: HTMLCanvasElement, coordinates: Arra
         const red = 255 - pixels[index];
         const green = 255 - pixels[index + 1];
         const blue = 255 - pixels[index + 2];
-        pixels[index] = finishColor(-0.574 * red + 1.43 * green + 0.144 * blue);
-        pixels[index + 1] = finishColor(0.426 * red + 0.43 * green + 0.144 * blue);
-        pixels[index + 2] = finishColor(0.426 * red + 1.43 * green - 0.856 * blue);
+        pixels[index] = finishColor(-0.574 * red + 1.43 * green + 0.144 * blue, pageBackground[0]);
+        pixels[index + 1] = finishColor(0.426 * red + 0.43 * green + 0.144 * blue, pageBackground[1]);
+        pixels[index + 2] = finishColor(0.426 * red + 1.43 * green - 0.856 * blue, pageBackground[2]);
       }
       context.putImageData(image, 0, top);
     }
@@ -52,7 +56,7 @@ export function darkenOutsideImages(canvas: HTMLCanvasElement, coordinates: Arra
   }
 }
 
-function finishColor(value: number): number {
-  const rotated = Math.max(0, Math.min(255, value));
-  return Math.max(0, Math.min(255, (rotated * 0.88 - 127.5) * 0.9 + 127.5));
+function finishColor(value: number, background: number): number {
+  const foreground = Math.max(0, Math.min(255, value * 1.15));
+  return background + foreground * (255 - background) / 255;
 }
