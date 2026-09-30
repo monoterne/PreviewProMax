@@ -41,6 +41,8 @@ PDF rendering is provided by [Mozilla PDF.js](https://mozilla.github.io/pdf.js/)
 
 Opening files adds document tabs. The picker and drag and drop accept multiple files. Each tab keeps its page position, zoom, rotation, and Find results. Use the **+** button for an empty tab and **New window** at the right of the tab bar for an independent window.
 
+Pinch on a trackpad or use Ctrl/Cmd plus the mouse wheel over a page to zoom around the pointer. Ordinary wheel scrolling moves through the PDF.
+
 | Action | macOS | Windows |
 | --- | --- | --- |
 | Open files | ⌘O | Ctrl+O |

@@ -110,6 +110,9 @@ let pdf: PdfDocument | null = null;
 let documentName = '';
 let currentPage = 1;
 let zoom = 1.25;
+let wheelZoom: number | null = null;
+let wheelZoomTimer: number | undefined;
+let pinchStartZoom = 0;
 let rotation = 0;
 let sidebarVisible = true;
 let dimensions: Dimensions[] = [];
@@ -164,6 +167,8 @@ function activateDocumentTab(id: string) {
   const tab = documentTabs.find(tab => tab.id === id);
   if (!tab || id === activeDocumentId) return;
   saveDocumentTab();
+  wheelZoom = null;
+  pinchStartZoom = 0;
   const previousPdf = pdf;
   searchAbort?.abort();
   searchEpoch++; navigationEpoch++; renderEpoch++; thumbnailEpoch++;
@@ -318,15 +323,39 @@ function scaleForFit() {
 }
 let fitWidth = true;
 function refreshFitIfNeeded() { if (fitWidth) setZoom(scaleForFit(), true); }
-function setZoom(value: number, keepFit = false) {
+function setZoom(value: number, keepFit = false, anchor?: { x: number; y: number }) {
   if (!pdf) return;
+  if (!anchor) wheelZoom = null;
   const next = Math.max(0.4, Math.min(3, Math.round(value * 20) / 20));
   if (Math.abs(next - zoom) < 0.001 && keepFit === fitWidth) return;
+  const shells = Array.from(pages.querySelectorAll<HTMLElement>('.page-shell'));
+  const anchoredPage = anchor && shells.reduce<HTMLElement | null>((nearest, shell) => {
+    if (!nearest) return shell;
+    const distance = (element: HTMLElement) => {
+      const rect = element.getBoundingClientRect();
+      return Math.max(rect.top - anchor.y, anchor.y - rect.bottom, 0);
+    };
+    return distance(shell) < distance(nearest) ? shell : nearest;
+  }, null);
+  const before = anchoredPage?.getBoundingClientRect();
+  const anchorPage = anchoredPage && before && anchor ? {
+    number: anchoredPage.dataset.page,
+    x: Math.max(0, Math.min(1, (anchor.x - before.left) / before.width)),
+    y: Math.max(0, Math.min(1, (anchor.y - before.top) / before.height)),
+  } : null;
   fitWidth = keepFit;
   zoom = next;
   zoomLabel.textContent = `${Math.round(zoom * 100)}%`;
   $('#fit-width').classList.toggle('selected', fitWidth);
   rebuildPages();
+  if (anchorPage && anchor) {
+    const shell = pages.querySelector<HTMLElement>(`.page-shell[data-page="${anchorPage.number}"]`);
+    if (shell) {
+      const after = shell.getBoundingClientRect();
+      viewer.scrollLeft += after.left + after.width * anchorPage.x - anchor.x;
+      viewer.scrollTop += after.top + after.height * anchorPage.y - anchor.y;
+    }
+  }
 }
 function updatePageSizes() {
   pages.querySelectorAll<HTMLElement>('.page-shell').forEach((shell, index) => {
@@ -705,6 +734,32 @@ pageNumber.addEventListener('keydown', event => { if (event.key === 'Enter') { g
 $('#zoom-in').addEventListener('click', () => setZoom(zoom + 0.15));
 $('#zoom-out').addEventListener('click', () => setZoom(zoom - 0.15));
 $('#fit-width').addEventListener('click', () => setZoom(scaleForFit(), true));
+viewer.addEventListener('wheel', event => {
+  if (!pdf || !(event.ctrlKey || event.metaKey)) return;
+  event.preventDefault();
+  if (pinchStartZoom) return;
+  const pixels = event.deltaY * (event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? viewer.clientHeight : 1);
+  wheelZoom = Math.max(0.4, Math.min(3, (wheelZoom ?? zoom) * Math.exp(-pixels / 400)));
+  setZoom(wheelZoom, false, { x: event.clientX, y: event.clientY });
+  window.clearTimeout(wheelZoomTimer);
+  wheelZoomTimer = window.setTimeout(() => { wheelZoom = null; }, 180);
+}, { passive: false });
+// WKWebView reports trackpad pinches as gesture events on some macOS versions.
+type PinchEvent = Event & { scale: number; clientX: number; clientY: number };
+viewer.addEventListener('gesturestart', event => {
+  if (!pdf) return;
+  event.preventDefault();
+  pinchStartZoom = zoom;
+});
+viewer.addEventListener('gesturechange', event => {
+  if (!pdf) return;
+  event.preventDefault();
+  const pinch = event as PinchEvent;
+  if (pinchStartZoom && Number.isFinite(pinch.scale) && pinch.scale > 0) {
+    setZoom(pinchStartZoom * pinch.scale, false, { x: pinch.clientX, y: pinch.clientY });
+  }
+});
+viewer.addEventListener('gestureend', event => { event.preventDefault(); pinchStartZoom = 0; });
 $('#rotate').addEventListener('click', () => { rotation = (rotation + 90) % 360; if (fitWidth) zoom = scaleForFit(); rebuildPages(); makeThumbnails(); zoomLabel.textContent = `${Math.round(zoom * 100)}%`; });
 function applyDarkMode(dark: boolean) {
   const wasPreservingImages = darkMode && !invertImages;

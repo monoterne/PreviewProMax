@@ -54,6 +54,36 @@ test('sidebar and selected thumbnails keep their size when switching tabs', asyn
   await expect(page.locator('#page-number')).toHaveValue('4');
 });
 
+test('pinch and modified mouse wheel zoom the page around the pointer', async ({ page }) => {
+  const before = await page.evaluate(() => {
+    const shell = document.querySelector('.page-shell')!.getBoundingClientRect();
+    return { zoom: document.querySelector('#zoom-label')!.textContent, x: shell.left + shell.width / 2, y: shell.top + shell.height / 3 };
+  });
+  await page.locator('#viewer').dispatchEvent('wheel', { deltaY: -160, ctrlKey: true, clientX: before.x, clientY: before.y });
+  await expect(page.locator('#zoom-label')).not.toHaveText(before.zoom!);
+  await expect(page.locator('#fit-width')).not.toHaveClass(/selected/);
+  const position = await page.evaluate(({ x, y }) => {
+    const shell = document.querySelector('.page-shell')!.getBoundingClientRect();
+    return { x: shell.left + shell.width / 2 - x, y: shell.top + shell.height / 3 - y };
+  }, before);
+  expect(Math.abs(position.x)).toBeLessThan(3);
+  expect(Math.abs(position.y)).toBeLessThan(3);
+
+  const wheelZoom = await page.locator('#zoom-label').textContent();
+  await page.locator('#viewer').dispatchEvent('wheel', { deltaY: 120, clientX: before.x, clientY: before.y });
+  await expect(page.locator('#zoom-label')).toHaveText(wheelZoom!);
+
+  await page.evaluate(({ x, y }) => {
+    const viewer = document.querySelector('#viewer')!;
+    viewer.dispatchEvent(new Event('gesturestart', { bubbles: true, cancelable: true }));
+    const change = new Event('gesturechange', { bubbles: true, cancelable: true });
+    Object.assign(change, { scale: 1.5, clientX: x, clientY: y });
+    viewer.dispatchEvent(change);
+    viewer.dispatchEvent(new Event('gestureend', { bubbles: true, cancelable: true }));
+  }, before);
+  await expect(page.locator('#zoom-label')).not.toHaveText(wheelZoom!);
+});
+
 test('find lists all matches and highlights the actual PDF glyphs at the correct scale', async ({ page }) => {
   await page.locator('#search-toggle').click();
   await page.locator('#search-input').fill('target');
