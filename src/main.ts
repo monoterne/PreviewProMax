@@ -138,7 +138,7 @@ let manualTheme = false;
 let toastTimer: number | undefined;
 let pageObserver: IntersectionObserver | null = null;
 let thumbObserver: IntersectionObserver | null = null;
-const pageRenders = new WeakMap<HTMLElement, Promise<void>>();
+const pageRenders = new WeakMap<HTMLElement, { epoch: number; task: Promise<void> }>();
 const renderedText = new WeakMap<HTMLElement, { divs: HTMLElement[]; strings: string[] }>();
 
 type DocumentTab = {
@@ -426,7 +426,8 @@ function previewScale(value: number, x: number, y: number) {
   const point = captureZoomPoint(x, y);
   previewZoom = next;
   previewAnchor = point;
-  pages.style.zoom = String(next / zoom);
+  pages.dataset.zoomPreview = 'true';
+  pages.style.setProperty('--page-preview-scale', String(next / zoom));
   zoomLabel.textContent = `${Math.round(next * 100)}%`;
   fitWidth = false;
   $('#fit-width').classList.remove('selected');
@@ -441,30 +442,52 @@ function commitZoomPreview() {
   wheelZoom = null;
   pinchStartZoom = 0;
   window.clearTimeout(wheelZoomTimer);
-  pages.style.zoom = '';
-  restoreZoomPoint(point);
-  setZoom(next, false, point ? { x: point.x, y: point.y } : undefined, true);
+  delete pages.dataset.zoomPreview;
+  pages.style.removeProperty('--page-preview-scale');
+  applyZoom(next, false, point);
 }
 function setZoom(value: number, keepFit = false, anchor?: { x: number; y: number }, precise = false) {
   if (!pdf) return;
   if (previewZoom !== null) commitZoomPreview();
   const next = Math.max(0.4, Math.min(3, precise ? value : Math.round(value * 20) / 20));
   if (Math.abs(next - zoom) < 0.0001 && keepFit === fitWidth) return;
-  const point = anchor ? captureZoomPoint(anchor.x, anchor.y) : null;
+  const bounds = viewer.getBoundingClientRect();
+  const point = captureZoomPoint(anchor?.x ?? bounds.left + bounds.width / 2, anchor?.y ?? bounds.top + bounds.height / 2);
+  applyZoom(next, keepFit, point);
+}
+function applyZoom(next: number, keepFit: boolean, point: ZoomPoint | null) {
+  if (!pdf) return;
   fitWidth = keepFit;
   zoom = next;
   zoomLabel.textContent = `${Math.round(zoom * 100)}%`;
   $('#fit-width').classList.toggle('selected', fitWidth);
-  rebuildPages();
-  queueSessionSave();
+  renderEpoch++;
+  navigationEpoch++;
+  updatePageSizes();
+  observePages();
   restoreZoomPoint(point);
+  trimRenderedPages();
+  queueSessionSave();
 }
 function updatePageSizes() {
   pages.querySelectorAll<HTMLElement>('.page-shell').forEach((shell, index) => {
     const d = pageDimensions(index);
     shell.style.width = `${d.width * zoom}px`;
     shell.style.height = `${d.height * zoom}px`;
+    const content = shell.querySelector<HTMLElement>('.page-content');
+    if (content) {
+      const drawnZoom = Number(shell.dataset.renderedZoom) || zoom;
+      content.style.transform = Math.abs(drawnZoom - zoom) < 0.0001 ? '' : `scale(${zoom / drawnZoom})`;
+    }
   });
+}
+function observePages() {
+  pageObserver?.disconnect();
+  const epoch = renderEpoch;
+  pageObserver = new IntersectionObserver(entries => {
+    for (const entry of entries) if (entry.isIntersecting) void renderPage(entry.target as HTMLElement, epoch);
+  }, { root: viewer, rootMargin: '700px 0px' });
+  pages.querySelectorAll('.page-shell').forEach(el => pageObserver!.observe(el));
 }
 function rebuildPages() {
   if (!pdf) return;
@@ -483,24 +506,22 @@ function rebuildPages() {
     pages.appendChild(shell);
   }
   updatePageSizes();
-  const epoch = renderEpoch;
-  pageObserver = new IntersectionObserver(entries => {
-    for (const entry of entries) if (entry.isIntersecting) renderPage(entry.target as HTMLElement, epoch);
-  }, { root: viewer, rootMargin: '700px 0px' });
-  pages.querySelectorAll('.page-shell').forEach(el => pageObserver!.observe(el));
+  observePages();
 }
 function renderPage(shell: HTMLElement, epoch: number): Promise<void> {
   if (epoch !== renderEpoch || shell.parentElement !== pages) return Promise.resolve();
   const pending = pageRenders.get(shell);
-  if (pending) return pending;
-  const task = renderPageContent(shell, epoch).finally(() => { pageRenders.delete(shell); renderJobs.delete(task); });
+  if (pending) return pending.epoch === epoch ? pending.task : pending.task.then(() => renderPage(shell, renderEpoch));
+  const task = renderPageContent(shell, epoch).finally(() => {
+    if (pageRenders.get(shell)?.task === task) pageRenders.delete(shell);
+    renderJobs.delete(task);
+  });
   renderJobs.add(task);
-  pageRenders.set(shell, task);
+  pageRenders.set(shell, { epoch, task });
   return task;
 }
 async function renderPageContent(shell: HTMLElement, epoch: number) {
-  if (!pdf || shell.dataset.rendering === 'true' || shell.dataset.rendered === 'true') return;
-  shell.dataset.rendering = 'true';
+  if (!pdf || (shell.dataset.rendered === 'true' && Math.abs(Number(shell.dataset.renderedZoom) - zoom) < 0.0001)) return;
   const number = Number(shell.dataset.page);
   try {
     const page = await pdf.getPage(number);
@@ -538,20 +559,28 @@ async function renderPageContent(shell: HTMLElement, epoch: number) {
       const text = new pdfjs.TextLayer({ textContentSource: content, container: textLayer, viewport });
       await text.render();
       const divs = text.textDivs as HTMLElement[];
-      renderedText.set(shell, {
-        divs,
-        strings: text.textContentItemsStr
-      });
+      if (epoch === renderEpoch) renderedText.set(shell, { divs, strings: text.textContentItemsStr });
     } catch { /* Image-only PDFs still render correctly. */ }
     if (epoch !== renderEpoch) return;
+    const content = document.createElement('div');
+    content.className = 'page-content';
+    content.style.width = `${viewport.width}px`;
+    content.style.height = `${viewport.height}px`;
+    content.append(canvas, textLayer);
+    const previous = shell.querySelector<HTMLElement>('.page-content');
+    if (previous) {
+      previous.remove();
+      releaseCanvases(previous);
+    }
     shell.querySelector('.page-loading')?.remove();
-    shell.prepend(canvas, textLayer);
+    shell.prepend(content);
     shell.dataset.rendered = 'true';
+    shell.dataset.renderedZoom = String(zoom);
     highlightVisibleText(shell);
   } catch (error) {
-    if (epoch === renderEpoch) shell.querySelector('.page-loading')!.textContent = 'Unable to render this page';
+    if (epoch === renderEpoch) shell.querySelector('.page-loading')?.replaceChildren('Unable to render this page');
     console.error(error);
-  } finally { shell.dataset.rendering = 'false'; }
+  }
 }
 function trimRenderedPages() {
   const view = viewer.getBoundingClientRect();
@@ -559,12 +588,11 @@ function trimRenderedPages() {
   pages.querySelectorAll<HTMLElement>('.page-shell[data-rendered="true"]').forEach(shell => {
     const rect = shell.getBoundingClientRect();
     if (rect.bottom < view.top - margin || rect.top > view.bottom + margin) {
-      const canvas = shell.querySelector('canvas');
-      canvas?.remove();
-      if (canvas) { canvas.width = 0; canvas.height = 0; }
-      shell.querySelector('.textLayer')?.remove();
+      const content = shell.querySelector('.page-content');
+      if (content) { content.remove(); releaseCanvases(content); }
       renderedText.delete(shell);
       shell.dataset.rendered = 'false';
+      delete shell.dataset.renderedZoom;
       if (!shell.querySelector('.page-loading')) {
         const loading = document.createElement('div');
         loading.className = 'page-loading';
