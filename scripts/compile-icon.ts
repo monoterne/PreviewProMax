@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, writeFile, copyFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile, copyFile, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 
 if (process.platform !== "darwin") process.exit(0);
@@ -8,7 +8,7 @@ const source = resolve(icons, "PreviewProMax.icon");
 const catalog = resolve(icons, "Assets.car");
 const record = resolve(icons, "catalog.json");
 const hash = new Bun.CryptoHasher("sha256");
-for (const name of ["icon.json", ...(await readdir(resolve(source, "Assets"))).sort().map(name => `Assets/${name}`)]) {
+for (const name of ["icon.json", ...(await readdir(resolve(source, "Assets"))).filter(name => !name.startsWith(".")).sort().map(name => `Assets/${name}`)]) {
   hash.update(name);
   hash.update(await readFile(resolve(source, name)));
 }
@@ -27,6 +27,7 @@ if (compiler.exitCode !== 0) {
 }
 const output = resolve(root, ".tmp/icon-catalog");
 await mkdir(output, { recursive: true });
+await rm(resolve(output, "Assets.car"), { force: true });
 const compile = Bun.spawn([
   "xcrun", "actool", source, "--compile", output,
   "--output-format", "human-readable-text", "--notices", "--warnings",

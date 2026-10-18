@@ -54,7 +54,6 @@ jobs:
           mkdir -p artifacts
           if [ "${{ runner.os }}" = "macOS" ]; then
             ditto -c -k --sequesterRsrc --keepParent "src-tauri/target/release/bundle/macos/Preview Pro Max.app" "artifacts/PreviewProMax-mac.app.zip"
-            cp src-tauri/icons/Assets.car src-tauri/icons/catalog.json artifacts/
           else
             cp src-tauri/target/release/preview-pro-max.exe artifacts/PreviewProMax-portable.exe
             cp src-tauri/target/release/bundle/nsis/*.exe artifacts/
@@ -63,4 +62,13 @@ jobs:
         with:
           name: preview-pro-max-${{ matrix.target }}
           path: artifacts/*
+          if-no-files-found: error
+      - name: Save compiled icon catalog
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v7
+        with:
+          name: preview-pro-max-icon-catalog
+          path: |
+            src-tauri/icons/Assets.car
+            src-tauri/icons/catalog.json
           if-no-files-found: error
