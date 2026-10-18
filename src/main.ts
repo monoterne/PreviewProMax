@@ -4,14 +4,15 @@ import { getCurrentWebview } from '@tauri-apps/api/webview';
 import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 import './style.css';
 import { pickDocumentPaths, readDocument, onOpenedDocument, onMenuAction, newWindow, closeWindow, windowReady, getSessions, saveSession, archiveSession, type OpenedDocument, type SavedTab, type SavedWindow } from './desktop';
-import { darkenOutsideImages } from './dark-page';
+import { mountApp } from './app-shell';
+import { releaseCanvases, renderRaster, renderText } from './pdf-rendering';
+import { mountZoom, type ZoomPoint } from './zoom';
 import { mountSidebarTabs, mountThemeSwitch } from './controls';
 import { mountDocumentTabs } from './document-tabs';
 import { type SearchHit } from './search';
 import { searchPdf } from './pdf-search';
 import { renderOutline } from './outline';
-import { selectedMarkup, paintMarkup, overlaps, type Markup, type MarkupKind } from './markup';
-import { circleEnd, paintDrawings, pointOnPage, updateDrawing, validDrawing, type Drawing, type DrawingTool, type Point } from './drawings';
+import { mountAnnotations } from './annotations';
 import type { SidebarTab } from './controls';
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
@@ -19,126 +20,8 @@ pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 type PdfDocument = pdfjs.PDFDocumentProxy;
 type Dimensions = { width: number; height: number };
 
-const paths: Record<string, string> = {
-  file: '<path d="M7 2.75h6l4.25 4.25V20a1.25 1.25 0 0 1-1.25 1.25H7A1.25 1.25 0 0 1 5.75 20V4A1.25 1.25 0 0 1 7 2.75Z"/><path d="M13 3v4.5h4.25M8.5 12h6M8.5 15.5h6"/>',
-  window: '<rect x="7" y="7" width="14" height="14" rx="2"/><path d="M16 7V4a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h3"/>',
-  folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/>',
-  panel: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/>',
-  search: '<circle cx="10.8" cy="10.8" r="6.2"/><path d="m15.5 15.5 5 5"/>',
-  minus: '<path d="M5 12h14"/>',
-  plus: '<path d="M5 12h14M12 5v14"/>',
-  chevronLeft: '<path d="m15 18-6-6 6-6"/>',
-  chevronRight: '<path d="m9 18 6-6-6-6"/>',
-  rotate: '<path d="M20 11a8 8 0 1 1-2.6-5.9M20 4v5h-5"/>',
-  fit: '<path d="M8 3H4a1 1 0 0 0-1 1v4m13-5h4a1 1 0 0 1 1 1v4M3 16v4a1 1 0 0 0 1 1h4m13-5v4a1 1 0 0 1-1 1h-4"/>'
-};
-function icon(name: string, size = 18) { return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name]}</svg>`; }
 function escapeHtml(text: string) { return text.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!); }
-function releaseCanvases(root: Element) {
-  root.querySelectorAll('canvas').forEach(canvas => { canvas.width = 0; canvas.height = 0; });
-}
-
-const app = document.querySelector<HTMLDivElement>('#app')!;
-const systemTheme = window.matchMedia('(prefers-color-scheme: dark)');
-const savedInvertImages = localStorage.getItem('invert-images') !== 'false';
-document.documentElement.dataset.theme = systemTheme.matches ? 'dark' : 'light';
-document.documentElement.dataset.invertImages = String(savedInvertImages);
-app.innerHTML = `
-  <header class="toolbar">
-    <div class="toolbar-left">
-      <button id="sidebar-toggle" class="icon-button" aria-label="Toggle sidebar" title="Toggle sidebar" disabled>${icon('panel')}</button>
-      <span class="toolbar-divider"></span>
-      <strong id="document-title" class="document-title">Preview Pro Max</strong>
-    </div>
-    <div class="toolbar-center" id="navigation" hidden>
-      <button class="icon-button" id="previous-page" aria-label="Previous page" title="Previous page">${icon('chevronLeft')}</button>
-      <div class="page-input-wrap"><input id="page-number" type="number" min="1" aria-label="Page number"><span id="page-total">/ 0</span></div>
-      <button class="icon-button" id="next-page" aria-label="Next page" title="Next page">${icon('chevronRight')}</button>
-      <span class="toolbar-divider"></span>
-      <button class="icon-button" id="zoom-out" aria-label="Zoom out" title="Zoom out">${icon('minus')}</button>
-      <span id="zoom-label" class="zoom-label">100%</span>
-      <button class="icon-button" id="zoom-in" aria-label="Zoom in" title="Zoom in">${icon('plus')}</button>
-      <button class="icon-button" id="fit-width" aria-label="Fit width" title="Fit width">${icon('fit')}</button>
-    </div>
-  <div class="toolbar-right">
-      <div class="drawing-control document-tool" id="drawing-control" hidden>
-        <button class="icon-button" id="drawing-toggle" aria-label="Drawing tools" aria-expanded="false" aria-controls="drawing-menu" title="Drawing tools">Draw</button>
-        <div class="drawing-menu" id="drawing-menu" hidden>
-          <div class="drawing-tools" aria-label="Drawing tool">
-            <button type="button" data-draw-tool="pencil">Pencil</button>
-            <button type="button" data-draw-tool="rectangle">Rectangle</button>
-            <button type="button" data-draw-tool="circle">Circle</button>
-            <button type="button" data-draw-tool="eraser">Eraser</button>
-          </div>
-          <div class="drawing-options">
-            <span>Color</span>
-            <div class="drawing-colors" aria-label="Drawing color">
-              <button type="button" data-draw-color="#e24b46" aria-label="Red" title="Red"></button>
-              <button type="button" data-draw-color="#2672d9" aria-label="Blue" title="Blue"></button>
-              <button type="button" data-draw-color="#23834b" aria-label="Green" title="Green"></button>
-              <button type="button" data-draw-color="#252525" aria-label="Black" title="Black"></button>
-              <button type="button" data-draw-color="#ffffff" aria-label="White" title="White"></button>
-            </div>
-            <label for="drawing-width">Line width</label>
-            <select id="drawing-width" aria-label="Drawing line width"><option value="2">Thin</option><option value="4" selected>Medium</option><option value="8">Thick</option></select>
-          </div>
-          <button type="button" id="drawing-done" class="drawing-done">Done drawing</button>
-        </div>
-      </div>
-      <div class="markup-control document-tool" id="markup-control" hidden>
-        <button class="icon-button" id="markup-toggle" aria-label="Markup selected text" aria-expanded="false" aria-controls="markup-menu" title="Markup selected text">Highlight</button>
-        <div class="markup-menu" id="markup-menu" hidden>
-          <span class="markup-heading">Selected text</span>
-          <div class="markup-colors" aria-label="Highlight color">
-            <button type="button" class="markup-choice markup-yellow" data-markup="yellow" aria-label="Highlight yellow" title="Highlight yellow"></button>
-            <button type="button" class="markup-choice markup-green" data-markup="green" aria-label="Highlight green" title="Highlight green"></button>
-            <button type="button" class="markup-choice markup-blue" data-markup="blue" aria-label="Highlight blue" title="Highlight blue"></button>
-            <button type="button" class="markup-choice markup-pink" data-markup="pink" aria-label="Highlight pink" title="Highlight pink"></button>
-          </div>
-          <button type="button" class="markup-menu-item" data-markup="underline">Underline</button>
-          <button type="button" class="markup-menu-item" data-markup="strike">Strikethrough</button>
-          <button type="button" class="markup-menu-item" data-markup="remove">Remove markup</button>
-        </div>
-      </div>
-      <button class="icon-button document-tool" id="rotate" aria-label="Rotate pages" title="Rotate pages" hidden>${icon('rotate')}</button>
-      <button class="icon-button document-tool" id="search-toggle" aria-label="Find in document" title="Find in document" hidden>${icon('search')}</button>
-      <span class="toolbar-divider"></span>
-      <div id="theme-control"></div>
-      <button id="open-button" class="open-button" aria-label="Open PDF">${icon('folder', 16)}<span>Open</span></button>
-    </div>
-  </header>
-  <div class="document-bar"><div id="document-tabs-root"></div><button id="new-window" class="icon-button" aria-label="New window" title="New window (⌘/Ctrl+N)">${icon('window')}</button></div>
-  <div class="workspace">
-    <aside class="sidebar" id="sidebar" hidden><div id="sidebar-tabs-root"></div></aside>
-    <main id="viewer" class="viewer" role="tabpanel">
-      <div id="welcome" class="welcome">
-        <div class="empty-icon">${icon('file', 24)}</div>
-        <h1>Open a PDF</h1>
-        <button id="welcome-open" class="open-button">${icon('folder', 16)}<span>Choose file</span></button>
-        <p>Or drop a PDF here</p>
-        <section id="recent-windows" class="recent-windows" aria-label="Previously open windows" hidden>
-          <h2>Previously open windows</h2>
-          <div id="recent-window-list"></div>
-        </section>
-      </div>
-      <div id="pages" class="pages" hidden></div>
-    </main>
-  </div>
-  <div id="drop-overlay" class="drop-overlay" hidden><div>${icon('file', 28)}<strong>Drop PDF to open</strong></div></div>
-  <dialog id="password-dialog" class="password-dialog" aria-labelledby="password-title">
-    <form method="dialog">
-      <h2 id="password-title">Password required</h2>
-      <p id="password-message">Enter the password for this PDF.</p>
-      <label for="pdf-password">Password</label>
-      <input id="pdf-password" type="password" autocomplete="off" />
-      <div class="password-actions">
-        <button id="password-cancel" class="open-button" type="button">Cancel</button>
-        <button class="open-button" value="open">Open</button>
-      </div>
-    </form>
-  </dialog>
-  <div id="toast" class="toast" role="status" hidden></div>
-`;
+const { systemTheme, savedInvertImages } = mountApp(document.querySelector<HTMLDivElement>('#app')!);
 
 const $ = <T extends HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
 const viewer = $<HTMLElement>('#viewer');
@@ -155,11 +38,6 @@ let pdf: PdfDocument | null = null;
 let documentName = '';
 let currentPage = 1;
 let zoom = 1.25;
-let wheelZoom: number | null = null;
-let wheelZoomTimer: number | undefined;
-let pinchStartZoom = 0;
-let previewZoom: number | null = null;
-let previewAnchor: ZoomPoint | null = null;
 let rotation = 0;
 let sidebarVisible = true;
 let dimensions: Dimensions[] = [];
@@ -181,15 +59,9 @@ let pageObserver: IntersectionObserver | null = null;
 let thumbObserver: IntersectionObserver | null = null;
 const pageRenders = new WeakMap<HTMLElement, { epoch: number; task: Promise<void> }>();
 const renderedText = new WeakMap<HTMLElement, { divs: HTMLElement[]; strings: string[] }>();
-let selectedText: Omit<Markup, 'kind'>[] = [];
-let annotations: Markup[] = [];
-let annotationKey = '';
-let drawings: Drawing[] = [];
-let drawingKey = '';
-let drawingTool: DrawingTool = null;
-let drawingColor = '#e24b46';
-let drawingWidth = 4;
-let activeDrawing: { drawing: Drawing; layer: SVGSVGElement; group: SVGGElement; pointerId: number } | null = null;
+const annotationTools = mountAnnotations({
+  pages, viewer, renderedText, enabled: () => !!pdf, getRotation: () => rotation, toast,
+});
 
 type DocumentTab = {
   id: string; name: string; path: string | null; pdf: PdfDocument | null; page: number; zoom: number;
@@ -198,7 +70,6 @@ type DocumentTab = {
   sidebarTab: SidebarTab; thumbnailTop: number; resultsTop: number;
   annotationKey: string;
 };
-type ZoomPoint = { page: string; x: number; y: number; pageX: number; pageY: number };
 let nextDocumentId = 1;
 function emptyDocumentTab(): DocumentTab {
   return { id: String(nextDocumentId++), name: 'New tab', path: null, pdf: null, page: 1, zoom: 1.25,
@@ -277,46 +148,11 @@ function saveDocumentTab() {
     hits, searchPending: searchRunning, selected: selectedHitIndex, sidebarTab: activeTab,
     thumbnailTop: thumbs.scrollTop, resultsTop: $('#search-results').scrollTop });
 }
-function readAnnotations(key: string): Markup[] {
-  if (!key) return [];
-  try {
-    const stored: unknown = JSON.parse(localStorage.getItem(key) || '[]');
-    return Array.isArray(stored) ? stored.filter((item): item is Markup =>
-      item && typeof item.page === 'number' && Number.isInteger(item.startItem) &&
-      Number.isInteger(item.endItem) && typeof item.startOffset === 'number' &&
-      typeof item.endOffset === 'number' &&
-      ['yellow', 'green', 'blue', 'pink', 'underline', 'strike'].includes(item.kind)) : [];
-  } catch { return []; }
-}
-function repaintAnnotations() {
-  pages.querySelectorAll<HTMLElement>('.page-shell[data-rendered="true"]').forEach(shell => {
-    const text = renderedText.get(shell);
-    if (text) paintMarkup(shell, text, annotations);
-  });
-}
-function readDrawings(key: string): Drawing[] {
-  if (!key) return [];
-  try {
-    const stored: unknown = JSON.parse(localStorage.getItem(key) || '[]');
-    return Array.isArray(stored) ? stored.filter(validDrawing) : [];
-  } catch { return []; }
-}
-function repaintDrawings() {
-  pages.querySelectorAll<HTMLElement>('.page-shell[data-rendered="true"]').forEach(shell =>
-    paintDrawings(shell, drawings, rotation, drawingTool));
-}
-function saveDrawings() {
-  try { localStorage.setItem(drawingKey, JSON.stringify(drawings)); }
-  catch { toast('Unable to save drawings.'); }
-  repaintDrawings();
-}
 function activateDocumentTab(id: string) {
   const tab = documentTabs.find(tab => tab.id === id);
   if (!tab || id === activeDocumentId) return;
   commitZoomPreview();
   saveDocumentTab();
-  wheelZoom = null;
-  pinchStartZoom = 0;
   const previousPdf = pdf;
   searchAbort?.abort();
   searchEpoch++; navigationEpoch++; renderEpoch++; thumbnailEpoch++;
@@ -325,19 +161,8 @@ function activateDocumentTab(id: string) {
   releaseCanvases(pages); releaseCanvases(thumbs);
   pages.replaceChildren(); thumbs.replaceChildren();
   activeDocumentId = id;
-  selectedText = [];
-  activeDrawing = null;
-  drawingTool = null;
-  $('#drawing-menu').hidden = true;
-  $('#drawing-toggle').setAttribute('aria-expanded', 'false');
-  $('#drawing-toggle').classList.remove('selected');
-  $('#markup-menu').hidden = true;
-  $('#markup-toggle').setAttribute('aria-expanded', 'false');
   pdf = tab.pdf; documentName = tab.name; currentPage = tab.page;
-  annotationKey = tab.annotationKey;
-  annotations = readAnnotations(annotationKey);
-  drawingKey = annotationKey.replace(/^pdf-markup:/, 'pdf-drawings:');
-  drawings = readDrawings(drawingKey);
+  annotationTools.activate(tab.annotationKey);
   zoom = tab.zoom; rotation = tab.rotation; fitWidth = tab.fit; dimensions = tab.dimensions;
   hits = tab.hits; activeSearchQuery = tab.activeQuery; searchRunning = false;
   selectedHitIndex = tab.selected; selectedHit = hits[selectedHitIndex] || null;
@@ -485,75 +310,25 @@ function pageDimensions(index: number): Dimensions {
 }
 function scaleForFit() {
   const width = pageDimensions(0).width;
-  return Math.max(0.4, Math.min(2.5, (viewer.clientWidth - 112) / width));
+  const style = getComputedStyle(pages);
+  const available = viewer.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+  return Math.max(0.4, Math.min(2.5, available / width));
 }
 let fitWidth = true;
 function refreshFitIfNeeded() { if (fitWidth) setZoom(scaleForFit(), true); }
-function captureZoomPoint(x: number, y: number): ZoomPoint | null {
-  const hit = document.elementFromPoint(x, y)?.closest<HTMLElement>('.page-shell');
-  const nearby = [currentPage - 1, currentPage, currentPage + 1]
-    .map(page => pages.children.item(page - 1))
-    .filter((element): element is HTMLElement => element instanceof HTMLElement);
-  const shell = hit && pages.contains(hit) ? hit : nearby.reduce<HTMLElement | null>((nearest, candidate) => {
-    if (!nearest) return candidate;
-    const distance = (element: HTMLElement) => {
-      const rect = element.getBoundingClientRect();
-      return Math.max(rect.top - y, y - rect.bottom, 0);
-    };
-    return distance(candidate) < distance(nearest) ? candidate : nearest;
-  }, null);
-  if (!shell) return null;
-  const rect = shell.getBoundingClientRect();
-  return { page: shell.dataset.page!, x, y,
-    pageX: Math.max(0, Math.min(1, (x - rect.left) / rect.width)),
-    pageY: Math.max(0, Math.min(1, (y - rect.top) / rect.height)) };
-}
-function restoreZoomPoint(point: ZoomPoint | null) {
-  if (!point) return;
-  const shell = pages.querySelector<HTMLElement>(`.page-shell[data-page="${point.page}"]`);
-  if (!shell) return;
-  const rect = shell.getBoundingClientRect();
-  viewer.scrollLeft += rect.left + rect.width * point.pageX - point.x;
-  viewer.scrollTop += rect.top + rect.height * point.pageY - point.y;
-}
-function previewScale(value: number, x: number, y: number) {
-  if (!pdf) return;
-  const next = Math.max(0.4, Math.min(3, value));
-  if (Math.abs(next - (previewZoom ?? zoom)) < 0.0001) return;
-  const point = captureZoomPoint(x, y);
-  previewZoom = next;
-  previewAnchor = point;
-  pages.dataset.zoomPreview = 'true';
-  pages.style.setProperty('--page-preview-scale', String(next / zoom));
-  zoomLabel.textContent = `${Math.round(next * 100)}%`;
-  fitWidth = false;
-  $('#fit-width').classList.remove('selected');
-  restoreZoomPoint(point);
-}
-function commitZoomPreview() {
-  if (previewZoom === null) return;
-  const next = previewZoom;
-  const point = previewAnchor;
-  previewZoom = null;
-  previewAnchor = null;
-  wheelZoom = null;
-  pinchStartZoom = 0;
-  window.clearTimeout(wheelZoomTimer);
-  delete pages.dataset.zoomPreview;
-  pages.style.removeProperty('--page-preview-scale');
-  applyZoom(next, false, point);
-}
-function setZoom(value: number, keepFit = false, anchor?: { x: number; y: number }, precise = false) {
-  if (!pdf) return;
-  if (previewZoom !== null) commitZoomPreview();
-  const next = Math.max(0.4, Math.min(3, precise ? value : Math.round(value * 20) / 20));
-  if (Math.abs(next - zoom) < 0.0001 && keepFit === fitWidth) return;
-  const bounds = viewer.getBoundingClientRect();
-  const point = captureZoomPoint(anchor?.x ?? bounds.left + bounds.width / 2, anchor?.y ?? bounds.top + bounds.height / 2);
-  applyZoom(next, keepFit, point);
-}
+const zoomController = mountZoom({
+  viewer, pages, enabled: () => !!pdf, value: () => zoom, currentPage: () => currentPage,
+  preview: value => {
+    zoomLabel.textContent = `${Math.round(value * 100)}%`;
+    fitWidth = false;
+    $('#fit-width').classList.remove('selected');
+  },
+  apply: applyZoom,
+});
+function commitZoomPreview() { zoomController.commit(); }
+function setZoom(value: number, keepFit = false) { zoomController.set(value, keepFit); }
 function applyZoom(next: number, keepFit: boolean, point: ZoomPoint | null) {
-  if (!pdf) return;
+  if (!pdf || (Math.abs(next - zoom) < 0.0001 && keepFit === fitWidth)) return;
   fitWidth = keepFit;
   zoom = next;
   zoomLabel.textContent = `${Math.round(zoom * 100)}%`;
@@ -562,7 +337,7 @@ function applyZoom(next: number, keepFit: boolean, point: ZoomPoint | null) {
   navigationEpoch++;
   updatePageSizes();
   observePages();
-  restoreZoomPoint(point);
+  zoomController.restore(point);
   trimRenderedPages();
   queueSessionSave();
 }
@@ -631,34 +406,18 @@ async function renderPageContent(shell: HTMLElement, epoch: number) {
       shell.style.height = `${d.height * zoom}px`;
     }
     const viewport = page.getViewport({ scale: zoom, rotation: (page.rotate + rotation) % 360 });
-    const ratio = Math.min(window.devicePixelRatio || 1, 2, Math.sqrt(8_000_000 / (viewport.width * viewport.height)));
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.floor(viewport.width * ratio);
-    canvas.height = Math.floor(viewport.height * ratio);
-    canvas.style.width = `${viewport.width}px`;
-    canvas.style.height = `${viewport.height}px`;
-    const context = canvas.getContext('2d', { alpha: false });
-    if (!context) throw new Error('Canvas is unavailable.');
-    const preserveImages = darkMode && !invertImages;
-    if (preserveImages) page.imageCoordinates = null;
-    await page.render({ canvasContext: context, canvas, viewport, transform: ratio === 1 ? undefined : [ratio, 0, 0, ratio, 0, 0], recordImages: preserveImages }).promise;
-    if (epoch !== renderEpoch) return;
-    if (preserveImages) {
-      try { darkenOutsideImages(canvas, page.imageCoordinates); }
-      catch (error) { canvas.classList.add('dark-filter-fallback'); console.error('Unable to preserve image colors:', error); }
-    }
-    const textLayer = document.createElement('div');
-    textLayer.className = 'textLayer';
-    textLayer.style.setProperty('--scale-factor', String(viewport.scale));
-    textLayer.style.setProperty('--total-scale-factor', String(viewport.scale * viewport.userUnit));
+    const canvas = await renderRaster(page, viewport, Math.min(window.devicePixelRatio || 1, 2), darkMode && !invertImages);
+    if (epoch !== renderEpoch) { canvas.width = 0; canvas.height = 0; return; }
+    let textLayer = document.createElement('div');
     try {
-      const content = await page.getTextContent({ disableNormalization: true });
-      const text = new pdfjs.TextLayer({ textContentSource: content, container: textLayer, viewport });
-      await text.render();
-      const divs = text.textDivs as HTMLElement[];
-      if (epoch === renderEpoch) renderedText.set(shell, { divs, strings: text.textContentItemsStr });
-    } catch { /* Image-only PDFs still render correctly. */ }
-    if (epoch !== renderEpoch) return;
+      const text = await renderText(page, viewport);
+      textLayer = text.element;
+      if (epoch === renderEpoch) renderedText.set(shell, { divs: text.divs, strings: text.strings });
+    } catch (error) {
+      if (epoch === renderEpoch) renderedText.delete(shell);
+      console.error('Unable to extract page text:', error);
+    }
+    if (epoch !== renderEpoch) { canvas.width = 0; canvas.height = 0; return; }
     const content = document.createElement('div');
     content.className = 'page-content';
     content.style.width = `${viewport.width}px`;
@@ -674,7 +433,7 @@ async function renderPageContent(shell: HTMLElement, epoch: number) {
     shell.dataset.rendered = 'true';
     shell.dataset.renderedZoom = String(zoom);
     highlightVisibleText(shell);
-    paintDrawings(shell, drawings, rotation, drawingTool);
+    annotationTools.paintDrawings(shell);
   } catch (error) {
     if (epoch === renderEpoch) shell.querySelector('.page-loading')?.replaceChildren('Unable to render this page');
     console.error(error);
@@ -731,7 +490,7 @@ function highlightVisibleText(shell: HTMLElement) {
     span.replaceChildren(content);
     itemStart = itemEnd;
   });
-  paintMarkup(shell, layer, annotations);
+  annotationTools.paintText(shell);
 }
 function scrollToSelectedMatch(shell: HTMLElement) {
   if (!selectedHit) return false;
@@ -844,18 +603,10 @@ async function renderThumbnailContent(button: HTMLElement, epoch: number) {
     const natural = page.getViewport({ scale: 1, rotation: (page.rotate + rotation) % 360 });
     const size = setThumbnailSize(button, { width: natural.width, height: natural.height });
     const viewport = page.getViewport({ scale: size.width / natural.width, rotation: (page.rotate + rotation) % 360 });
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.ceil(viewport.width * 1.5);
-    canvas.height = Math.ceil(viewport.height * 1.5);
-    canvas.style.width = `${viewport.width}px`;
-    canvas.style.height = `${viewport.height}px`;
-    const preserveImages = darkMode && !invertImages;
-    if (preserveImages) page.imageCoordinates = null;
-    await page.render({ canvasContext: canvas.getContext('2d')!, canvas, viewport, transform: [1.5, 0, 0, 1.5, 0, 0], recordImages: preserveImages }).promise;
-    if (pdf !== sourcePdf || epoch !== thumbnailEpoch || button.dataset.visible !== 'true') return;
-    if (preserveImages) {
-      try { darkenOutsideImages(canvas, page.imageCoordinates); }
-      catch (error) { canvas.classList.add('dark-filter-fallback'); console.error('Unable to preserve thumbnail image colors:', error); }
+    const canvas = await renderRaster(page, viewport, 1.5, darkMode && !invertImages);
+    if (pdf !== sourcePdf || epoch !== thumbnailEpoch || button.dataset.visible !== 'true') {
+      canvas.width = 0; canvas.height = 0;
+      return;
     }
     button.querySelector('.thumbnail-paper')!.replaceChildren(canvas);
     button.dataset.rendered = 'true';
@@ -998,34 +749,6 @@ pageNumber.addEventListener('keydown', event => { if (event.key === 'Enter') { g
 $('#zoom-in').addEventListener('click', () => { commitZoomPreview(); setZoom(zoom + 0.15); });
 $('#zoom-out').addEventListener('click', () => { commitZoomPreview(); setZoom(zoom - 0.15); });
 $('#fit-width').addEventListener('click', () => { commitZoomPreview(); setZoom(scaleForFit(), true); });
-viewer.addEventListener('wheel', event => {
-  if (!pdf || !(event.ctrlKey || event.metaKey)) return;
-  event.preventDefault();
-  if (pinchStartZoom) return;
-  const pixels = event.deltaY * (event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? viewer.clientHeight : 1);
-  wheelZoom = Math.max(0.4, Math.min(3, (wheelZoom ?? previewZoom ?? zoom) * Math.exp(-pixels / 400)));
-  previewScale(wheelZoom, event.clientX, event.clientY);
-  window.clearTimeout(wheelZoomTimer);
-  wheelZoomTimer = window.setTimeout(commitZoomPreview, 400);
-}, { passive: false });
-// WKWebView reports trackpad pinches as gesture events on some macOS versions.
-type PinchEvent = Event & { scale: number; clientX: number; clientY: number };
-viewer.addEventListener('gesturestart', event => {
-  if (!pdf) return;
-  event.preventDefault();
-  window.clearTimeout(wheelZoomTimer);
-  pinchStartZoom = previewZoom ?? zoom;
-});
-viewer.addEventListener('gesturechange', event => {
-  if (!pdf) return;
-  event.preventDefault();
-  const pinch = event as PinchEvent;
-  if (pinchStartZoom && Number.isFinite(pinch.scale) && pinch.scale > 0) {
-    previewScale(pinchStartZoom * pinch.scale, pinch.clientX, pinch.clientY);
-  }
-});
-viewer.addEventListener('gestureend', event => { event.preventDefault(); pinchStartZoom = 0; commitZoomPreview(); });
-window.addEventListener('blur', commitZoomPreview);
 $('#rotate').addEventListener('click', () => { commitZoomPreview(); rotation = (rotation + 90) % 360; if (fitWidth) zoom = scaleForFit(); rebuildPages(); makeThumbnails(); zoomLabel.textContent = `${Math.round(zoom * 100)}%`; queueSessionSave(); });
 function applyDarkMode(dark: boolean) {
   commitZoomPreview();
@@ -1056,159 +779,11 @@ window.addEventListener('storage', event => {
     const invert = event.newValue !== 'false';
     applyInvertImages(invert); themeControls.setInvert(invert);
   }
-  if (event.key === annotationKey) { annotations = readAnnotations(annotationKey); repaintAnnotations(); }
-  if (event.key === drawingKey) { drawings = readDrawings(drawingKey); repaintDrawings(); }
 });
 tabBar = mountDocumentTabs($('#document-tabs-root'), activateDocumentTab, id => { void closeDocumentTab(id); }, newDocumentTab);
 tabBar.update(documentTabs, activeDocumentId);
 $('#new-window').addEventListener('click', () => { void newWindow().catch(error => toast(String(error))); });
 $('#search-toggle').addEventListener('click', () => { setSidebar(true); showTab('search'); });
-function captureSelectedText() {
-  const selection = window.getSelection();
-  if (!pdf || !selection || selection.isCollapsed || !selection.rangeCount) return;
-  const range = selection.getRangeAt(0);
-  const captured: Omit<Markup, 'kind'>[] = [];
-  pages.querySelectorAll<HTMLElement>('.page-shell[data-rendered="true"]').forEach(shell => {
-    if (!range.intersectsNode(shell)) return;
-    const text = renderedText.get(shell);
-    if (!text) return;
-    const item = selectedMarkup(range, shell, text);
-    if (item) captured.push(item);
-  });
-  if (captured.length) selectedText = captured;
-}
-viewer.addEventListener('pointerup', captureSelectedText);
-viewer.addEventListener('keyup', captureSelectedText);
-viewer.addEventListener('pointerdown', () => { selectedText = []; });
-$('#markup-toggle').addEventListener('pointerdown', captureSelectedText);
-$('#markup-toggle').addEventListener('click', () => {
-  const menu = $('#markup-menu');
-  menu.hidden = !menu.hidden;
-  $('#markup-toggle').setAttribute('aria-expanded', String(!menu.hidden));
-});
-$('#markup-menu').addEventListener('click', event => {
-  const button = (event.target as Element).closest<HTMLButtonElement>('[data-markup]');
-  if (!button) return;
-  captureSelectedText();
-  if (!selectedText.length) { toast('Select text in the PDF first.'); return; }
-  const kind = button.dataset.markup as MarkupKind | 'remove';
-  if (kind === 'remove') annotations = annotations.filter(mark => !selectedText.some(item => overlaps(mark, item)));
-  else annotations.push(...selectedText.map(item => ({ ...item, kind })));
-  try { localStorage.setItem(annotationKey, JSON.stringify(annotations)); }
-  catch { toast('Unable to save markup.'); }
-  repaintAnnotations();
-  window.getSelection()?.removeAllRanges();
-  selectedText = [];
-  $('#markup-menu').hidden = true;
-  $('#markup-toggle').setAttribute('aria-expanded', 'false');
-});
-document.addEventListener('pointerdown', event => {
-  if (!(event.target as Element).closest('#markup-control')) {
-    $('#markup-menu').hidden = true;
-    $('#markup-toggle').setAttribute('aria-expanded', 'false');
-  }
-});
-function setDrawingTool(tool: DrawingTool) {
-  if (activeDrawing) {
-    activeDrawing.group.remove();
-    if (activeDrawing.layer.hasPointerCapture(activeDrawing.pointerId)) activeDrawing.layer.releasePointerCapture(activeDrawing.pointerId);
-  }
-  activeDrawing = null;
-  drawingTool = tool;
-  $('#drawing-toggle').classList.toggle('selected', !!tool);
-  $('#drawing-toggle').setAttribute('aria-label', tool ? `Drawing tools: ${tool} active` : 'Drawing tools');
-  document.querySelectorAll<HTMLButtonElement>('[data-draw-tool]').forEach(button => {
-    button.setAttribute('aria-pressed', String(button.dataset.drawTool === tool));
-  });
-  repaintDrawings();
-}
-$('#drawing-toggle').addEventListener('click', () => {
-  const menu = $('#drawing-menu');
-  menu.hidden = !menu.hidden;
-  $('#drawing-toggle').setAttribute('aria-expanded', String(!menu.hidden));
-});
-$('#drawing-menu').addEventListener('click', event => {
-  const button = (event.target as Element).closest<HTMLButtonElement>('[data-draw-tool], [data-draw-color], #drawing-done');
-  if (!button) return;
-  if (button.dataset.drawTool) {
-    setDrawingTool(button.dataset.drawTool === drawingTool ? null : button.dataset.drawTool as DrawingTool);
-    $('#drawing-menu').hidden = true;
-    $('#drawing-toggle').setAttribute('aria-expanded', 'false');
-  } else if (button.dataset.drawColor) {
-    drawingColor = button.dataset.drawColor;
-    document.querySelectorAll<HTMLButtonElement>('[data-draw-color]').forEach(color =>
-      color.setAttribute('aria-pressed', String(color.dataset.drawColor === drawingColor)));
-  } else {
-    setDrawingTool(null);
-    $('#drawing-menu').hidden = true;
-    $('#drawing-toggle').setAttribute('aria-expanded', 'false');
-  }
-});
-$<HTMLSelectElement>('#drawing-width').addEventListener('change', event => {
-  drawingWidth = Number((event.target as HTMLSelectElement).value);
-});
-document.querySelectorAll<HTMLButtonElement>('[data-draw-color]').forEach(button => {
-  button.style.backgroundColor = button.dataset.drawColor!;
-  button.setAttribute('aria-pressed', String(button.dataset.drawColor === drawingColor));
-});
-document.addEventListener('pointerdown', event => {
-  if (!(event.target as Element).closest('#drawing-control')) {
-    $('#drawing-menu').hidden = true;
-    $('#drawing-toggle').setAttribute('aria-expanded', 'false');
-  }
-});
-pages.addEventListener('pointerdown', event => {
-  if (!drawingTool || (event.button !== 0 && event.pointerType !== 'touch')) return;
-  const layer = (event.target as Element).closest<SVGSVGElement>('.drawing-layer');
-  if (!layer) return;
-  event.preventDefault();
-  if (drawingTool === 'eraser') {
-    const id = (event.target as Element).closest<SVGGElement>('[data-drawing-id]')?.dataset.drawingId;
-    if (id) { drawings = drawings.filter(drawing => drawing.id !== id); saveDrawings(); }
-    return;
-  }
-  const shell = layer.closest<HTMLElement>('.page-shell')!;
-  const start = pointOnPage(event, layer);
-  const drawing: Drawing = { id: crypto.randomUUID(), page: Number(shell.dataset.page), kind: drawingTool,
-    points: drawingTool === 'pencil' ? [start] : [start, start], rotation, color: drawingColor, width: drawingWidth };
-  const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-  group.classList.add('drawing-preview');
-  updateDrawing(group, drawing, rotation);
-  layer.appendChild(group);
-  activeDrawing = { drawing, layer, group, pointerId: event.pointerId };
-  layer.setPointerCapture(event.pointerId);
-});
-pages.addEventListener('pointermove', event => {
-  const active = activeDrawing;
-  if (!active || active.pointerId !== event.pointerId) return;
-  event.preventDefault();
-  const coalesced = active.drawing.kind === 'pencil' ? event.getCoalescedEvents?.() : undefined;
-  const samples = coalesced?.length ? coalesced : [event];
-  for (const sample of samples) {
-    let point = pointOnPage(sample, active.layer);
-    if (active.drawing.kind === 'circle') point = circleEnd(active.drawing.points[0], point, active.layer);
-    if (active.drawing.kind === 'pencil') {
-      const last = active.drawing.points.at(-1)!;
-      if (active.drawing.points.length < 10000 && Math.hypot(point[0] - last[0], point[1] - last[1]) > 0.0005)
-        active.drawing.points.push(point);
-    } else active.drawing.points[1] = point;
-  }
-  updateDrawing(active.group, active.drawing, rotation);
-});
-function finishDrawing(event: PointerEvent, cancel = false) {
-  const active = activeDrawing;
-  if (!active || active.pointerId !== event.pointerId) return;
-  activeDrawing = null;
-  if (active.layer.hasPointerCapture(event.pointerId)) active.layer.releasePointerCapture(event.pointerId);
-  active.group.remove();
-  if (cancel) return;
-  const [start, end = start] = active.drawing.points;
-  if (active.drawing.kind !== 'pencil' && Math.hypot(end[0] - start[0], end[1] - start[1]) < 0.002) return;
-  drawings.push(active.drawing);
-  saveDrawings();
-}
-pages.addEventListener('pointerup', event => finishDrawing(event));
-pages.addEventListener('pointercancel', event => finishDrawing(event, true));
 let searchTimer: number | undefined;
 $<HTMLInputElement>('#search-input').addEventListener('input', () => {
   window.clearTimeout(searchTimer);
@@ -1261,7 +836,7 @@ viewer.addEventListener('scroll', () => {
 }, { passive: true });
 new ResizeObserver(() => refreshFitIfNeeded()).observe(viewer);
 window.addEventListener('keydown', event => {
-  if (event.key === 'Escape' && drawingTool) { setDrawingTool(null); return; }
+  if (event.key === 'Escape' && annotationTools.dismissDrawing()) return;
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'n') { event.preventDefault(); void newWindow().catch(error => toast(String(error))); return; }
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 't') { event.preventDefault(); newDocumentTab(); return; }
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'w') { event.preventDefault(); void closeDocumentTab(activeDocumentId); return; }

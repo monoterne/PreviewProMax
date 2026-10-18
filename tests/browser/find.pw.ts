@@ -127,6 +127,8 @@ test('trackpad pinch updates the page continuously before the gesture ends', asy
   await expect(page.locator('#zoom-label')).toHaveText(result.previewLabel!);
   await expect.poll(() => page.evaluate(() => document.querySelector('.page-shell canvas') !== (window as any).__zoomCanvas)).toBe(true);
 
+  // A separate wheel sequence starts after the native pinch's trailing events.
+  await page.waitForTimeout(150);
   const wheel = await page.evaluate(() => {
     const viewer = document.querySelector('#viewer')!;
     const shell = document.querySelector<HTMLElement>('.page-shell')!;
@@ -201,6 +203,98 @@ test('a second pinch keeps the page visible while the first render finishes', as
   expect(result.pageKept && result.canvasKept).toBe(true);
   await expect.poll(() => page.evaluate(() => document.querySelector('.page-shell canvas') !== (window as any).__oldPinchCanvas)).toBe(true);
   await expect(page.locator('#zoom-label')).toHaveText(result.zoom!);
+});
+
+test('a pinch keeps its original anchor when the reported centroid jitters', async ({ page }) => {
+  await page.locator('.thumbnail[data-page="12"]').click();
+  await expect(page.locator('.page-shell[data-page="12"] canvas')).toBeVisible();
+  const offsets = await page.evaluate(() => {
+    const viewer = document.querySelector('#viewer')!;
+    const shell = document.querySelector<HTMLElement>('.page-shell[data-page="12"]')!;
+    const rect = shell.getBoundingClientRect();
+    const x = rect.left + rect.width / 2, y = rect.top + rect.height * 0.4;
+    const positions: number[] = [];
+    viewer.dispatchEvent(new Event('gesturestart', { bubbles: true, cancelable: true }));
+    for (const [scale, jitter] of [[1.1, 0], [0.65, 8], [1.25, -6], [1.05, 10]]) {
+      const change = new Event('gesturechange', { bubbles: true, cancelable: true });
+      Object.assign(change, { scale, clientX: x + jitter, clientY: y - jitter });
+      viewer.dispatchEvent(change);
+      const current = shell.getBoundingClientRect();
+      // Vertical position stays anchored even when the narrow page has no horizontal scroll range.
+      positions.push(current.top + current.height * 0.4 - y);
+    }
+    viewer.dispatchEvent(new Event('gestureend', { bubbles: true, cancelable: true }));
+    const final = shell.getBoundingClientRect();
+    positions.push(final.top + final.height * 0.4 - y);
+    return positions;
+  });
+  expect(Math.max(...offsets.map(Math.abs)), JSON.stringify(offsets)).toBeLessThan(3);
+});
+
+test('pinch end ignores duplicate wheel zoom and ordinary scrolling can resume', async ({ page }) => {
+  const result = await page.evaluate(() => {
+    const viewer = document.querySelector<HTMLElement>('#viewer')!;
+    const shell = document.querySelector<HTMLElement>('.page-shell')!;
+    const rect = shell.getBoundingClientRect();
+    const x = rect.left + rect.width / 2, y = rect.top + rect.height / 3;
+    viewer.dispatchEvent(new Event('gesturestart', { bubbles: true, cancelable: true }));
+    const change = new Event('gesturechange', { bubbles: true, cancelable: true });
+    Object.assign(change, { scale: 1.2, clientX: x, clientY: y });
+    viewer.dispatchEvent(change);
+    viewer.dispatchEvent(new Event('gestureend', { bubbles: true, cancelable: true }));
+    const label = document.querySelector('#zoom-label')!.textContent;
+    viewer.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, ctrlKey: true,
+      deltaY: -20, clientX: x, clientY: y }));
+    const ordinary = new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 100 });
+    viewer.dispatchEvent(ordinary);
+    return { label, finalLabel: document.querySelector('#zoom-label')!.textContent, blocked: ordinary.defaultPrevented };
+  });
+  expect(result.finalLabel).toBe(result.label);
+  expect(result.blocked).toBe(false);
+  await page.locator('#viewer').hover();
+  const before = await page.locator('#viewer').evaluate(el => el.scrollTop);
+  await page.mouse.wheel(0, 220);
+  await expect.poll(() => page.locator('#viewer').evaluate(el => el.scrollTop)).toBeGreaterThan(before + 100);
+});
+
+test('wheel zoom followed by scrolling does not jump back when its timer ends', async ({ page }) => {
+  await page.locator('#viewer').dispatchEvent('wheel', { ctrlKey: true, deltaY: -30, clientX: 600, clientY: 350 });
+  const scrolling = await page.evaluate(() => {
+    const viewer = document.querySelector<HTMLElement>('#viewer')!;
+    const wheel = new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 150 });
+    viewer.dispatchEvent(wheel);
+    viewer.scrollTop += 150;
+    return { top: viewer.scrollTop, blocked: wheel.defaultPrevented };
+  });
+  expect(scrolling.blocked).toBe(false);
+  await page.waitForTimeout(500);
+  expect(await page.locator('#viewer').evaluate(el => el.scrollTop)).toBeCloseTo(scrolling.top, 0);
+});
+
+test('compact toolbar keeps every control inside the window in both themes', async ({ page }) => {
+  await page.setViewportSize({ width: 760, height: 640 });
+  await page.getByRole('tab', { name: 'find-fixture.pdf', exact: true }).focus();
+  for (const theme of ['light', 'dark']) {
+    if (theme === 'dark') await page.locator('#dark-mode-switch').click();
+    const geometry = await page.evaluate(() => {
+      const header = document.querySelector('.toolbar')!.getBoundingClientRect();
+      const tabs = document.querySelector('.document-bar')!.getBoundingClientRect();
+      const nav = document.querySelector('#navigation')!.getBoundingClientRect();
+      const buttons = [...document.querySelectorAll<HTMLElement>('.toolbar button')]
+        .filter(button => button.getClientRects().length).map(button => {
+          const rect = button.getBoundingClientRect();
+          return { name: button.getAttribute('aria-label'), left: rect.left, right: rect.right, bottom: rect.bottom };
+        });
+      return { buttons, headerBottom: header.bottom, tabsTop: tabs.top, navBottom: nav.bottom };
+    });
+    for (const control of geometry.buttons) {
+      expect(control.left, control.name!).toBeGreaterThanOrEqual(0);
+      expect(control.right, control.name!).toBeLessThanOrEqual(760);
+      expect(control.bottom, control.name!).toBeLessThanOrEqual(geometry.headerBottom);
+    }
+    expect(geometry.tabsTop).toBeGreaterThanOrEqual(geometry.navBottom);
+    await page.screenshot({ path: `test-results/compact-${theme}.png` });
+  }
 });
 
 test('open tabs are saved and listed on an empty tab', async ({ page }) => {
