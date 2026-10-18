@@ -9,6 +9,24 @@ async function useViewOption(page: Page, selector: string) {
   if (await panel.isVisible()) await page.locator('#view-toggle').click();
 }
 
+async function pageFill(page: Page) {
+  const clip = await page.locator('.page-shell').first().evaluate(element => {
+    const bounds = element.getBoundingClientRect();
+    return { x: Math.round(bounds.left + 8), y: Math.round(bounds.top + 8), width: 2, height: 2 };
+  });
+  const screenshot = await page.screenshot({ clip });
+  return page.evaluate(async encoded => {
+    const image = new Image();
+    image.src = `data:image/png;base64,${encoded}`;
+    await image.decode();
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 2;
+    const context = canvas.getContext('2d')!;
+    context.drawImage(image, 0, 0);
+    return Array.from(context.getImageData(0, 0, 1, 1).data).slice(0, 3);
+  }, screenshot.toString('base64'));
+}
+
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(bytes => {
     // Exercise the compatibility path used by older system webviews.
@@ -475,6 +493,40 @@ test('dark pages and thumbnails use the ui tint and white text', async ({ page }
   expect(colors.thumbCorner).toEqual(background);
   expect(colors.hasWhiteText).toBe(true);
   await page.screenshot({ path: 'test-results/dark-preserve.png' });
+});
+
+test('dark page fill stays consistent across zoom compositing and raster replacement', async ({ page }) => {
+  await useViewOption(page, '#dark-mode-switch');
+  for (const preserveImages of [false, true]) {
+    if (preserveImages) await useViewOption(page, '#invert-images-switch');
+    const shell = page.locator('.page-shell').first();
+    await expect(shell).toHaveAttribute('data-rendered', 'true');
+    const baseline = await pageFill(page);
+    expect(baseline).toEqual([35, 36, 40]);
+    // A retained raster enters a separate compositing group while it scales.
+    // Hold that state so screenshots cannot miss a brief flash before replacement.
+    await shell.locator('.page-content').evaluate(element => {
+      (element as HTMLElement).style.transform = 'scale(1.04)';
+    });
+    expect(await pageFill(page)).toEqual(baseline);
+    await shell.locator('.page-content').evaluate(element => {
+      (element as HTMLElement).style.transform = '';
+    });
+    await page.evaluate(() => {
+      const viewer = document.querySelector('#viewer')!;
+      const shell = document.querySelector('.page-shell')!;
+      const bounds = shell.getBoundingClientRect();
+      (window as any).__fillCanvas = shell.querySelector('canvas');
+      viewer.dispatchEvent(new Event('gesturestart', { bubbles: true, cancelable: true }));
+      const change = new Event('gesturechange', { bubbles: true, cancelable: true });
+      Object.assign(change, { scale: 1.04, clientX: bounds.left + bounds.width / 2, clientY: bounds.top + 20 });
+      viewer.dispatchEvent(change);
+    });
+    expect(await pageFill(page)).toEqual(baseline);
+    await page.locator('#viewer').dispatchEvent('gestureend');
+    await expect.poll(() => page.evaluate(() => document.querySelector('.page-shell canvas') !== (window as any).__fillCanvas)).toBe(true);
+    expect(await pageFill(page)).toEqual(baseline);
+  }
 });
 
 test('a replaced query cannot leave stale results or navigate to the previous query', async ({ page }) => {
