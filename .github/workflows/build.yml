@@ -40,6 +40,14 @@ jobs:
         if: runner.os == 'macOS'
         run: bun run test:native
       - run: bun tauri build --bundles ${{ matrix.bundles }}
+      - name: Check adaptive macOS icon
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          app="src-tauri/target/release/bundle/macos/Preview Pro Max.app"
+          test -s "$app/Contents/Resources/Assets.car"
+          test -s "$app/Contents/Resources/icon.icns"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$app/Contents/Info.plist")" = "PreviewProMax"
       - name: Prepare downloads
         shell: bash
         run: |
@@ -54,4 +62,13 @@ jobs:
         with:
           name: preview-pro-max-${{ matrix.target }}
           path: artifacts/*
+          if-no-files-found: error
+      - name: Save compiled icon catalog
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v7
+        with:
+          name: preview-pro-max-icon-catalog
+          path: |
+            src-tauri/icons/Assets.car
+            src-tauri/icons/catalog.json
           if-no-files-found: error
