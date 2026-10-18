@@ -6,8 +6,10 @@ Preview Pro Max is a desktop PDF viewer built with Tauri 2, Bun, TypeScript, CSS
 
 - Give every commit subject and workflow run a short, clear, entirely lowercase type-prefixed name, such as `feat: add page bookmarks`, `fix: restore pdf search`, `docs: explain downloads`, `ci: test dependency updates`, or `chore: update bun packages`.
 - Aim for six words or fewer. Clarity takes priority over an exact count. Use one line without filler.
+- Commit requested changes directly to `main` and push them. Do not create branches or pull requests unless the user explicitly asks.
+- Do not check or poll GitHub Actions runs, CI status, or artifacts unless the user explicitly asks. After pushing, report the commit and stop.
 - Set an explicit lowercase workflow `run-name` so Actions does not display a long generated pull request title. Configure Dependabot commit prefixes, and lowercase its generated subjects when merging.
-- Run the desktop workflow on pushes and pull requests to `main`, including Dependabot pull requests. Keep its token read-only and test the production build on both platforms before merging dependency updates.
+- Run the desktop workflow on pushes and pull requests to `main`, including Dependabot pull requests. Keep its token read-only and test the production build on both platforms for dependency updates.
 
 Run `bun run typecheck`, `bun test`, and `bun run build:web` after renderer changes. Run `bun run dist:mac` on macOS or `bun run dist:win` on Windows after native, packaging, or dependency changes. Verify the GitHub Actions artifacts on both platforms before claiming release support.
 Use current GitHub Actions versions that run on Node 24; do not add Node 20 actions or a Node.js setup step. Keep Bun as the package manager and frontend build tool, and keep application code in TypeScript or Rust.
