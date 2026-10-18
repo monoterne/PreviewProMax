@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024"><defs><linearGradient id="rim" x2=".8" y2="1"><stop stop-color="#fff"/><stop offset=".3" stop-color="#e7f1fa"/><stop offset=".52" stop-color="#819bb7"/><stop offset=".75" stop-color="#e0eaf6"/><stop offset="1" stop-color="#a0b5cd"/></linearGradient><linearGradient id="lens" x2=".7" y2="1"><stop stop-color="#e6f8ff" stop-opacity=".52"/><stop offset="1" stop-color="#70c3f2" stop-opacity=".2"/></linearGradient></defs>
+  <circle cx="651" cy="607" r="144" fill="url(#lens)" stroke="url(#rim)" stroke-width="26"/>
+  <circle cx="651" cy="607" r="130" fill="none" stroke="#29496b" stroke-opacity=".55" stroke-width="4"/>
+  <path d="M551 583a105 105 0 0 1 86-80" fill="none" stroke="#fff" stroke-opacity=".8" stroke-width="9" stroke-linecap="round"/></svg>
