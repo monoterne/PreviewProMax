@@ -54,15 +54,25 @@ setInterval(() => {
     started = true;
     const viewer = document.querySelector('#viewer');
     const shell = document.querySelector('.page-shell');
-    const width = shell.getBoundingClientRect().width;
+    const initial = shell.getBoundingClientRect();
+    const width = initial.width;
+    const x = initial.left + width / 2, y = initial.top + 100;
     viewer.dispatchEvent(new Event('gesturestart', {bubbles: true, cancelable: true}));
-    const change = new Event('gesturechange', {bubbles: true, cancelable: true});
-    Object.assign(change, {scale: 1.1, clientX: shell.getBoundingClientRect().left + width / 2, clientY: shell.getBoundingClientRect().top + 100});
-    viewer.dispatchEvent(change);
-    window.__pinchSmooth = shell === document.querySelector('.page-shell') && shell.getBoundingClientRect().width > width && document.querySelector('#pages').dataset.zoomPreview === 'true';
+    for (const [scale, jitter] of [[1.1, 0], [0.6, 8], [1.18, -6]]) {
+      const change = new Event('gesturechange', {bubbles: true, cancelable: true});
+      Object.assign(change, {scale, clientX: x + jitter, clientY: y - jitter});
+      viewer.dispatchEvent(change);
+    }
+    const final = shell.getBoundingClientRect();
+    window.__pinchSmooth = shell === document.querySelector('.page-shell') && final.width > width &&
+      Math.abs(final.top + final.height * (100 / initial.height) - y) < 3 &&
+      document.querySelector('#pages').dataset.zoomPreview === 'true';
     const canvas = shell.querySelector('canvas');
     viewer.dispatchEvent(new Event('gestureend', {bubbles: true, cancelable: true}));
     window.__pinchSmooth &&= shell.querySelector('canvas') === canvas && !!canvas.width && !shell.querySelector('.page-loading');
+    const label = document.querySelector('#zoom-label').textContent;
+    viewer.dispatchEvent(new WheelEvent('wheel', {bubbles: true, cancelable: true, ctrlKey: true, deltaY: -20, clientX: x, clientY: y}));
+    window.__pinchSmooth &&= document.querySelector('#zoom-label').textContent === label && document.querySelector('#pages').dataset.zoomPreview === undefined;
     document.querySelector('#search-toggle').click();
     const input = document.querySelector('#search-input'); input.value = \(query); input.dispatchEvent(new Event('input'));
     return;
