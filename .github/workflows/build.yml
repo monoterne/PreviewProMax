@@ -36,6 +36,13 @@ jobs:
       - run: bun test
       - run: bunx playwright install ${{ matrix.browser }}
       - run: bun run test:ui --project=${{ matrix.browser }}
+      - name: Upload viewer screenshots
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: viewer-screenshots-${{ matrix.target }}
+          path: test-results/*.png
+          if-no-files-found: ignore
       - name: Check native macOS webview
         if: runner.os == 'macOS'
         run: bun run test:native
