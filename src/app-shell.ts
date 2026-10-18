@@ -3,6 +3,9 @@ import { mountDropdown } from './dropdown';
 const paths: Record<string, string> = {
   settings: '<path d="M4 7h10m4 0h2M4 17h2m4 0h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/>',
   pencil: '<path d="m15 4 5 5M4 20l5-1L20 8a2 2 0 0 0-5-5L4 14v6Z"/>',
+  rectangle: '<rect x="4" y="5" width="16" height="14" rx="2"/>',
+  circle: '<circle cx="12" cy="12" r="8"/>',
+  eraser: '<path d="m7 21-4.3-4.3a2.4 2.4 0 0 1 0-3.4L13.3 2.7a2.4 2.4 0 0 1 3.4 0l4.6 4.6a2.4 2.4 0 0 1 0 3.4L11 21H7ZM6.5 9.5l8 8M11 21h10"/>',
   highlight: '<path d="m9 11 7-7 5 5-7 7M9 11l5 5-3 3-5-5 3-3ZM3 21h8M6 14l-3 6 6-3"/>',
   file: '<path d="M7 2.75h6l4.25 4.25V20a1.25 1.25 0 0 1-1.25 1.25H7A1.25 1.25 0 0 1 5.75 20V4A1.25 1.25 0 0 1 7 2.75Z"/><path d="M13 3v4.5h4.25M8.5 12h6M8.5 15.5h6"/>',
   window: '<rect x="7" y="7" width="14" height="14" rx="2"/><path d="M16 7V4a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h3"/>',
@@ -42,11 +45,11 @@ export function mountApp(app: HTMLDivElement) {
       <div class="drawing-control document-tool" id="drawing-control" hidden>
         <button class="icon-button" id="drawing-toggle" aria-label="Drawing tools" aria-expanded="false" aria-controls="drawing-menu" title="Drawing tools">${icon('pencil')}</button>
         <div class="drawing-menu" id="drawing-menu" hidden>
-          <div class="drawing-tools" aria-label="Drawing tool">
-            <button type="button" data-draw-tool="pencil">Pencil</button>
-            <button type="button" data-draw-tool="rectangle">Rectangle</button>
-            <button type="button" data-draw-tool="circle">Circle</button>
-            <button type="button" data-draw-tool="eraser">Eraser</button>
+          <div class="drawing-tools" role="group" aria-label="Drawing tool">
+            <button type="button" data-draw-tool="pencil" aria-label="Pencil" title="Pencil">${icon('pencil')}</button>
+            <button type="button" data-draw-tool="rectangle" aria-label="Rectangle" title="Rectangle">${icon('rectangle')}</button>
+            <button type="button" data-draw-tool="circle" aria-label="Circle" title="Circle">${icon('circle')}</button>
+            <button type="button" data-draw-tool="eraser" aria-label="Eraser" title="Eraser">${icon('eraser')}</button>
           </div>
           <div class="drawing-options">
             <span>Color</span>
