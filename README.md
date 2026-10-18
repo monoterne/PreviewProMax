@@ -13,7 +13,7 @@ A desktop PDF viewer for macOS and Windows. The interface uses Bun, TypeScript, 
 
 PDF.js opens PDF documents, including PDFs whose names do not end in `.pdf`. The app accepts any file from the picker or a drop so PDF.js can validate it, then reports unsupported files without closing the current document.
 
-Dark mode changes only the display. The **Invert images** switch is available while dark mode is on. Turn it off to leave embedded images in their original colors while darkening the rest of each page.
+Use **View options** in the toolbar for rotation and appearance settings. Dark mode changes only the display. The **Invert images** switch is available while dark mode is on. Turn it off to leave embedded images in their original colors while darkening the rest of each page.
 
 ## Development
 

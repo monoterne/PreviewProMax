@@ -1,4 +1,9 @@
+import { mountDropdown } from './dropdown';
+
 const paths: Record<string, string> = {
+  settings: '<path d="M4 7h10m4 0h2M4 17h2m4 0h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/>',
+  pencil: '<path d="m15 4 5 5M4 20l5-1L20 8a2 2 0 0 0-5-5L4 14v6Z"/>',
+  highlight: '<path d="m9 11 7-7 5 5-7 7M9 11l5 5-3 3-5-5 3-3ZM3 21h8M6 14l-3 6 6-3"/>',
   file: '<path d="M7 2.75h6l4.25 4.25V20a1.25 1.25 0 0 1-1.25 1.25H7A1.25 1.25 0 0 1 5.75 20V4A1.25 1.25 0 0 1 7 2.75Z"/><path d="M13 3v4.5h4.25M8.5 12h6M8.5 15.5h6"/>',
   window: '<rect x="7" y="7" width="14" height="14" rx="2"/><path d="M16 7V4a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h3"/>',
   folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/>',
@@ -20,11 +25,10 @@ export function mountApp(app: HTMLDivElement) {
   app.innerHTML = `
   <header class="toolbar">
     <div class="toolbar-left">
-      <button id="sidebar-toggle" class="icon-button" aria-label="Toggle sidebar" title="Toggle sidebar" disabled>${icon('panel')}</button>
-      <span class="toolbar-divider"></span>
+      <button id="sidebar-toggle" class="icon-button" aria-label="Toggle sidebar" aria-controls="sidebar" aria-expanded="false" title="Toggle sidebar" disabled>${icon('panel')}</button>
       <strong id="document-title" class="document-title">Preview Pro Max</strong>
     </div>
-    <div class="toolbar-center" id="navigation" hidden>
+    <div class="toolbar-center" id="navigation" role="group" aria-label="Page navigation and zoom" hidden>
       <button class="icon-button" id="previous-page" aria-label="Previous page" title="Previous page">${icon('chevronLeft')}</button>
       <div class="page-input-wrap"><input id="page-number" type="number" min="1" aria-label="Page number"><span id="page-total">/ 0</span></div>
       <button class="icon-button" id="next-page" aria-label="Next page" title="Next page">${icon('chevronRight')}</button>
@@ -36,7 +40,7 @@ export function mountApp(app: HTMLDivElement) {
     </div>
   <div class="toolbar-right">
       <div class="drawing-control document-tool" id="drawing-control" hidden>
-        <button class="icon-button" id="drawing-toggle" aria-label="Drawing tools" aria-expanded="false" aria-controls="drawing-menu" title="Drawing tools">Draw</button>
+        <button class="icon-button" id="drawing-toggle" aria-label="Drawing tools" aria-expanded="false" aria-controls="drawing-menu" title="Drawing tools">${icon('pencil')}</button>
         <div class="drawing-menu" id="drawing-menu" hidden>
           <div class="drawing-tools" aria-label="Drawing tool">
             <button type="button" data-draw-tool="pencil">Pencil</button>
@@ -60,7 +64,7 @@ export function mountApp(app: HTMLDivElement) {
         </div>
       </div>
       <div class="markup-control document-tool" id="markup-control" hidden>
-        <button class="icon-button" id="markup-toggle" aria-label="Markup selected text" aria-expanded="false" aria-controls="markup-menu" title="Markup selected text">Highlight</button>
+        <button class="icon-button" id="markup-toggle" aria-label="Markup selected text" aria-expanded="false" aria-controls="markup-menu" title="Markup selected text">${icon('highlight')}</button>
         <div class="markup-menu" id="markup-menu" hidden>
           <span class="markup-heading">Selected text</span>
           <div class="markup-colors" aria-label="Highlight color">
@@ -74,16 +78,21 @@ export function mountApp(app: HTMLDivElement) {
           <button type="button" class="markup-menu-item" data-markup="remove">Remove markup</button>
         </div>
       </div>
-      <button class="icon-button document-tool" id="rotate" aria-label="Rotate pages" title="Rotate pages" hidden>${icon('rotate')}</button>
       <button class="icon-button document-tool" id="search-toggle" aria-label="Find in document" title="Find in document" hidden>${icon('search')}</button>
-      <span class="toolbar-divider"></span>
-      <div id="theme-control"></div>
+      <div class="view-control">
+        <button class="icon-button" id="view-toggle" aria-label="View options" aria-expanded="false" aria-controls="view-menu" title="View options">${icon('settings')}</button>
+        <div class="view-menu" id="view-menu" role="group" aria-label="View options" hidden>
+          <button class="menu-item document-tool" id="rotate" aria-label="Rotate pages" hidden>${icon('rotate', 16)}<span>Rotate clockwise</span></button>
+          <div class="menu-heading">Appearance</div>
+          <div id="theme-control"></div>
+        </div>
+      </div>
       <button id="open-button" class="open-button" aria-label="Open PDF">${icon('folder', 16)}<span>Open</span></button>
     </div>
   </header>
   <div class="document-bar"><div id="document-tabs-root"></div><button id="new-window" class="icon-button" aria-label="New window" title="New window (⌘/Ctrl+N)">${icon('window')}</button></div>
   <div class="workspace">
-    <aside class="sidebar" id="sidebar" hidden><div id="sidebar-tabs-root"></div></aside>
+    <aside class="sidebar" id="sidebar" aria-label="Document navigation" hidden><div id="sidebar-tabs-root"></div></aside>
     <main id="viewer" class="viewer" role="tabpanel">
       <div id="welcome" class="welcome">
         <div class="empty-icon">${icon('file', 24)}</div>
@@ -114,5 +123,7 @@ export function mountApp(app: HTMLDivElement) {
   <div id="toast" class="toast" role="status" hidden></div>
   `;
 
+  const view = mountDropdown(app.querySelector<HTMLButtonElement>('#view-toggle')!, app.querySelector<HTMLElement>('#view-menu')!);
+  app.querySelector('#rotate')!.addEventListener('click', () => view.close(true));
   return { systemTheme, savedInvertImages };
 }

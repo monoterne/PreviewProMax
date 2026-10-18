@@ -1,6 +1,13 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import { fixture } from '../fixtures/pdf';
 
+
+async function useViewOption(page: Page, selector: string) {
+  const panel = page.locator('#view-menu');
+  if (!await panel.isVisible()) await page.getByRole('button', { name: 'View options', exact: true }).click();
+  await page.locator(selector).click();
+  if (await panel.isVisible()) await page.locator('#view-toggle').click();
+}
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(bytes => {
@@ -273,9 +280,18 @@ test('wheel zoom followed by scrolling does not jump back when its timer ends', 
 
 test('compact toolbar keeps every control inside the window in both themes', async ({ page }) => {
   await page.setViewportSize({ width: 760, height: 640 });
-  await page.getByRole('tab', { name: 'find-fixture.pdf', exact: true }).focus();
+  const name = 'Research notes with a very long document title and appendix.pdf';
+  await page.evaluate(path => {
+    localStorage.setItem('__skipPending', 'true');
+    localStorage.setItem('__testSessions', JSON.stringify({ restore: {
+      id: 'compact-window', active: 0, tabs: [{ path, page: 1, zoom: 1, rotation: 0, fit: true, top: 0, left: 0 }],
+    }, recent: [] }));
+  }, name);
+  await page.reload();
+  await expect(page.locator('.page-shell').first()).toHaveAttribute('data-rendered', 'true');
+  await page.getByRole('tab', { name, exact: true }).focus();
   for (const theme of ['light', 'dark']) {
-    if (theme === 'dark') await page.locator('#dark-mode-switch').click();
+    if (theme === 'dark') await useViewOption(page, '#dark-mode-switch');
     const geometry = await page.evaluate(() => {
       const header = document.querySelector('.toolbar')!.getBoundingClientRect();
       const tabs = document.querySelector('.document-bar')!.getBoundingClientRect();
@@ -285,7 +301,9 @@ test('compact toolbar keeps every control inside the window in both themes', asy
           const rect = button.getBoundingClientRect();
           return { name: button.getAttribute('aria-label'), left: rect.left, right: rect.right, bottom: rect.bottom };
         });
-      return { buttons, headerBottom: header.bottom, tabsTop: tabs.top, navBottom: nav.bottom };
+      const left = document.querySelector('.toolbar-left')!.getBoundingClientRect();
+      const right = document.querySelector('.toolbar-right')!.getBoundingClientRect();
+      return { buttons, headerBottom: header.bottom, tabsTop: tabs.top, navBottom: nav.bottom, leftEnd: left.right, navStart: nav.left, navEnd: nav.right, rightStart: right.left };
     });
     for (const control of geometry.buttons) {
       expect(control.left, control.name!).toBeGreaterThanOrEqual(0);
@@ -293,8 +311,38 @@ test('compact toolbar keeps every control inside the window in both themes', asy
       expect(control.bottom, control.name!).toBeLessThanOrEqual(geometry.headerBottom);
     }
     expect(geometry.tabsTop).toBeGreaterThanOrEqual(geometry.navBottom);
+    expect(geometry.leftEnd).toBeLessThanOrEqual(geometry.navStart);
+    expect(geometry.navEnd).toBeLessThanOrEqual(geometry.rightStart);
     await page.screenshot({ path: `test-results/compact-${theme}.png` });
   }
+});
+
+test('view options support keyboard dismissal and keep navigation clear', async ({ page }) => {
+  const toggle = page.getByRole('button', { name: 'View options', exact: true });
+  await toggle.focus();
+  await toggle.press('ArrowDown');
+  await expect(page.locator('#rotate')).toBeFocused();
+  await page.locator('#rotate').press('Escape');
+  await expect(page.locator('#view-menu')).toBeHidden();
+  await expect(toggle).toBeFocused();
+  await toggle.press('Enter');
+  await page.locator('#rotate').press('Tab');
+  await expect(page.locator('#dark-mode-switch')).toBeFocused();
+  await page.locator('#dark-mode-switch').press('Tab');
+  await expect(page.locator('#view-menu')).toBeHidden();
+  await expect(page.locator('#open-button')).toBeFocused();
+  await toggle.click();
+  await page.getByRole('button', { name: 'Drawing tools', exact: true }).click();
+  await expect(page.locator('#view-menu')).toBeHidden();
+  await expect(page.locator('#drawing-menu')).toBeVisible();
+  await page.getByRole('button', { name: 'Pencil', exact: true }).press('Escape');
+  await expect(page.locator('#drawing-menu')).toBeHidden();
+  await page.locator('#sidebar-toggle').click();
+  await expect(page.locator('#sidebar')).toBeHidden();
+  await expect(page.locator('#sidebar-toggle')).toHaveAttribute('aria-expanded', 'false');
+  await page.locator('#sidebar-toggle').click();
+  await expect(page.locator('#sidebar')).toBeVisible();
+  await expect(page.locator('.thumbnail.active')).toHaveAttribute('aria-current', 'page');
 });
 
 test('open tabs are saved and listed on an empty tab', async ({ page }) => {
@@ -308,7 +356,7 @@ test('open tabs are saved and listed on an empty tab', async ({ page }) => {
   await expect(page.locator('#recent-windows')).toBeVisible();
   await expect(page.locator('.recent-window')).toContainText('find-fixture.pdf');
   await page.screenshot({ path: 'test-results/recent-light.png' });
-  await page.locator('#dark-mode-switch').click();
+  await useViewOption(page, '#dark-mode-switch');
   await page.screenshot({ path: 'test-results/recent-dark.png' });
 });
 
@@ -353,7 +401,7 @@ test('find lists all matches and highlights the actual PDF glyphs at the correct
   await page.locator('#search-input').press('Enter');
   await expect(page.locator('.search-result.active')).toHaveAttribute('data-index', '62');
   await page.screenshot({ path: 'test-results/find-light.png' });
-  await page.locator('#dark-mode-switch').click();
+  await useViewOption(page, '#dark-mode-switch');
   await page.screenshot({ path: 'test-results/find-dark.png' });
 });
 
@@ -393,7 +441,7 @@ test('tabs restore page and find state while releasing inactive page canvases', 
 test('system theme is the default and image inversion survives a new launch', async ({ page }) => {
   await page.emulateMedia({ colorScheme: 'dark' });
   await expect(page.locator('#dark-mode-switch')).toHaveAttribute('data-state', 'checked');
-  await page.locator('#invert-images-switch').click();
+  await useViewOption(page, '#invert-images-switch');
   await expect(page.locator('html')).toHaveAttribute('data-invert-images', 'false');
   await page.reload();
   await expect(page.locator('#dark-mode-switch')).toHaveAttribute('data-state', 'checked');
@@ -404,8 +452,8 @@ test('system theme is the default and image inversion survives a new launch', as
 });
 
 test('dark pages and thumbnails use the ui tint and white text', async ({ page }) => {
-  await page.locator('#dark-mode-switch').click();
-  await page.locator('#invert-images-switch').click();
+  await useViewOption(page, '#dark-mode-switch');
+  await useViewOption(page, '#invert-images-switch');
   await expect(page.locator('html')).toHaveAttribute('data-invert-images', 'false');
   await expect(page.locator('.page-shell').first()).toHaveAttribute('data-rendered', 'true');
   await expect(page.locator('.thumbnail-paper canvas').first()).toBeVisible();
@@ -456,7 +504,7 @@ test('a page selection cancels pending match navigation without jumping back', a
 });
 
 test('find highlights remain inside the PDF after rotation and zoom', async ({ page }) => {
-  await page.locator('#rotate').click();
+  await useViewOption(page, '#rotate');
   await page.locator('#zoom-in').click();
   await page.locator('#search-toggle').click();
   await page.locator('#search-input').fill('beta');
@@ -519,7 +567,7 @@ test('pencil and shapes persist and the eraser removes a drawing', async ({ page
   await choose('Circle');
   await draw(250, 50, 330, 130);
   await expect(page.locator('.page-shell[data-page="1"] .drawing-layer [data-drawing-id]')).toHaveCount(3);
-  await page.getByRole('button', { name: 'Rotate pages' }).click();
+  await useViewOption(page, '#rotate');
   await expect(page.locator('.page-shell[data-page="1"] .drawing-layer [data-drawing-id]')).toHaveCount(3);
   await page.reload();
   await expect(page.locator('.page-shell[data-page="1"] .drawing-layer [data-drawing-id]')).toHaveCount(3);
