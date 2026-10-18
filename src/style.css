@@ -97,8 +97,9 @@ svg { flex: none; }
 .markup-colors { display: flex; gap: var(--space-2); padding: var(--space-1) var(--space-2) var(--space-2); }
 .markup-choice { width: 28px; height: 28px; border: 1px solid var(--border-strong); border-radius: var(--radius-round); }
 .markup-choice:hover { border-color: var(--accent); }
-.drawing-tools { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-1); }
+.drawing-tools { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-1); justify-items: center; }
 .drawing-tools button, .drawing-done { min-height: var(--control-size); padding: var(--space-2); text-align: left; color: var(--text); background: transparent; border: 0; border-radius: var(--radius-sm); }
+.drawing-tools button { width: 36px; height: 36px; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--radius-round); }
 .drawing-tools button:hover, .drawing-done:hover { background: var(--surface-hover); }
 .drawing-tools button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
 .drawing-options { display: grid; gap: var(--space-2); padding: var(--space-3) var(--space-1); font-size: 12px; color: var(--muted); }
@@ -172,7 +173,8 @@ svg { flex: none; }
 .pages { display: flex; flex-direction: column; align-items: center; gap: var(--space-6); min-height: 100%; padding: var(--space-6) var(--space-8) 64px; }
 .pages[data-zoom-preview="true"] .page-shell { zoom: var(--page-preview-scale); }
 .page-shell { position: relative; flex: none; overflow: hidden; isolation: isolate; background: var(--page); box-shadow: var(--page-shadow); }
-.page-content { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
+/* Zoom transforms isolate blending; keep its backdrop identical to the page. */
+.page-content { position: absolute; top: 0; left: 0; transform-origin: 0 0; background: var(--page); }
 .markup-layer { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
 .drawing-layer { position: absolute; inset: 0; z-index: 3; width: 100%; height: 100%; pointer-events: none; }
 .drawing-layer.drawing-active { pointer-events: all; cursor: crosshair; touch-action: none; }
