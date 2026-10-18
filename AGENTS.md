@@ -1,6 +1,6 @@
 # Project guidance
 
-Preview Pro Max is a desktop PDF viewer built with Tauri 2, Bun, TypeScript, Tailwind CSS, and PDF.js. Bun installs dependencies and builds the web UI. Rust builds the native shell. Released apps must not embed Node, Bun, or Chromium.
+Preview Pro Max is a desktop PDF viewer built with Tauri 2, Bun, TypeScript, CSS, and PDF.js. Bun installs dependencies and builds the web UI. Rust builds the native shell. Released apps must not embed Node, Bun, or Chromium.
 
 ## Commit and workflow names
 
@@ -30,7 +30,7 @@ Use current GitHub Actions versions that run on Node 24; do not add Node 20 acti
 - Let PDF.js validate files from the picker and drop path. Show a clear error for unsupported files and keep the current document open.
 - List every Find occurrence, including repeated matches on one page, and keep the count and selected result in sync.
 - Offer an image inversion switch with dark mode. When inversion is off, preserve embedded image pixels while darkening the rest of the page and thumbnail.
-- Use native DOM controls and Tailwind utilities. Keep inputs and tab buttons mounted when views change so listeners and focus remain stable. Do not add React or a component framework without a concrete need.
+- Use native DOM controls and the existing CSS classes. Keep inputs and tab buttons mounted when views change so listeners and focus remain stable. Do not add React or a component framework without a concrete need.
 - Use a system sans-serif font, a consistent 4/8/12/16/24/32px spacing scale, subtle borders, and 6–10px control radii.
 - Avoid decorative gradients, glows, floating cards, oversized headings, eyebrow labels, mottos, filler descriptions, and large shadows.
 - Keep hover effects to color or border changes. Reserve motion for functional state changes.

@@ -1,6 +1,6 @@
 # Preview Pro Max
 
-A desktop PDF viewer for macOS and Windows. The interface uses Bun, TypeScript, Tailwind CSS, and Mozilla PDF.js; Tauri supplies the native window and file picker. The finished app uses the operating system webview and includes no Node or Bun runtime.
+A desktop PDF viewer for macOS and Windows. The interface uses Bun, TypeScript, CSS, and Mozilla PDF.js; Tauri supplies the native window and file picker. The finished app uses the operating system webview and includes no Node or Bun runtime.
 
 ## Features
 
