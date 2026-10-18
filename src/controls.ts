@@ -14,7 +14,7 @@ export function mountSidebarTabs(node: HTMLElement, onTabChange: (tab: SidebarTa
         <button id="next-match" class="icon-button" aria-label="Next match" title="Next match (Enter)" disabled>↓</button></div>
       <div id="search-results" class="search-results"></div>
     </section>
-    <section id="pane-contents" class="sidebar-pane" role="tabpanel" aria-labelledby="sidebar-contents"><div id="outline" class="min-h-0 overflow-auto p-2">Open a PDF to see its contents.</div></section>
+    <section id="pane-contents" class="sidebar-pane" role="tabpanel" aria-labelledby="sidebar-contents"><div id="outline" class="outline">Open a PDF to see its contents.</div></section>
   </div>`;
   function setTab(selected: SidebarTab) {
     for (const tab of tabs) {
