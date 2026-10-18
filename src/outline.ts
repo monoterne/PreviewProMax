@@ -32,7 +32,7 @@ export async function renderOutline(node: HTMLElement, pdf: PDFDocumentProxy | n
           toggle.setAttribute('aria-label', `Expand ${item.title}`);
           const setOpen = (open: boolean) => { children.hidden = !open; toggle.textContent = open ? '▾' : '▸'; toggle.setAttribute('aria-expanded', String(open)); toggle.setAttribute('aria-label', `${open ? 'Collapse' : 'Expand'} ${item.title}`); };
           setOpen(Number(item.count ?? 0) >= 0);
-          toggle.onclick = () => setOpen(children.hidden);
+          toggle.onclick = () => setOpen(children.hidden === true);
           row.prepend(toggle); li.append(children);
         }
         list.append(li);
