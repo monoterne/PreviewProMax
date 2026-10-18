@@ -11,7 +11,7 @@ export async function renderOutline(node: HTMLElement, pdf: PDFDocumentProxy | n
     node.replaceChildren();
     if (!outline?.length) { node.textContent = 'This PDF has no table of contents.'; return; }
     const build = (items: NonNullable<typeof outline>): HTMLElement => {
-      const list = document.createElement('ul'); list.className = 'm-0 list-none p-0';
+      const list = document.createElement('ul'); list.className = 'outline-list';
       for (const item of items) {
         const li = document.createElement('li');
         const row = document.createElement('div'); row.className = 'outline-row';
@@ -27,7 +27,7 @@ export async function renderOutline(node: HTMLElement, pdf: PDFDocumentProxy | n
         };
         row.append(button); li.append(row);
         if (item.items.length) {
-          const children = build(item.items); children.classList.add('pl-4');
+          const children = build(item.items);
           const toggle = document.createElement('button'); toggle.className = 'outline-toggle';
           toggle.setAttribute('aria-label', `Expand ${item.title}`);
           const setOpen = (open: boolean) => { children.hidden = !open; toggle.textContent = open ? '▾' : '▸'; toggle.setAttribute('aria-expanded', String(open)); toggle.setAttribute('aria-label', `${open ? 'Collapse' : 'Expand'} ${item.title}`); };

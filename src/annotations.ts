@@ -1,3 +1,4 @@
+import { mountDropdown } from './dropdown';
 import { selectedMarkup, paintMarkup, overlaps, type Markup, type MarkupKind } from './markup';
 import { circleEnd, paintDrawings, pointOnPage, updateDrawing, validDrawing, type Drawing, type DrawingTool } from './drawings';
 type AnnotationOptions = {
@@ -73,11 +74,7 @@ export function mountAnnotations(options: AnnotationOptions) {
   viewer.addEventListener('keyup', captureSelectedText);
   viewer.addEventListener('pointerdown', () => { selectedText = []; });
   $('#markup-toggle').addEventListener('pointerdown', captureSelectedText);
-  $('#markup-toggle').addEventListener('click', () => {
-    const menu = $('#markup-menu');
-    menu.hidden = !menu.hidden;
-    $('#markup-toggle').setAttribute('aria-expanded', String(!menu.hidden));
-  });
+  const markupMenu = mountDropdown($<HTMLButtonElement>('#markup-toggle'), $('#markup-menu'));
   $('#markup-menu').addEventListener('click', event => {
     const button = (event.target as Element).closest<HTMLButtonElement>('[data-markup]');
     if (!button) return;
@@ -91,14 +88,7 @@ export function mountAnnotations(options: AnnotationOptions) {
     repaintAnnotations();
     window.getSelection()?.removeAllRanges();
     selectedText = [];
-    $('#markup-menu').hidden = true;
-    $('#markup-toggle').setAttribute('aria-expanded', 'false');
-  });
-  document.addEventListener('pointerdown', event => {
-    if (!(event.target as Element).closest('#markup-control')) {
-      $('#markup-menu').hidden = true;
-      $('#markup-toggle').setAttribute('aria-expanded', 'false');
-    }
+    markupMenu.close(true);
   });
   function setDrawingTool(tool: DrawingTool) {
     if (activeDrawing) {
@@ -114,26 +104,20 @@ export function mountAnnotations(options: AnnotationOptions) {
     });
     repaintDrawings();
   }
-  $('#drawing-toggle').addEventListener('click', () => {
-    const menu = $('#drawing-menu');
-    menu.hidden = !menu.hidden;
-    $('#drawing-toggle').setAttribute('aria-expanded', String(!menu.hidden));
-  });
+  const drawingMenu = mountDropdown($<HTMLButtonElement>('#drawing-toggle'), $('#drawing-menu'));
   $('#drawing-menu').addEventListener('click', event => {
     const button = (event.target as Element).closest<HTMLButtonElement>('[data-draw-tool], [data-draw-color], #drawing-done');
     if (!button) return;
     if (button.dataset.drawTool) {
       setDrawingTool(button.dataset.drawTool === drawingTool ? null : button.dataset.drawTool as DrawingTool);
-      $('#drawing-menu').hidden = true;
-      $('#drawing-toggle').setAttribute('aria-expanded', 'false');
+      drawingMenu.close(true);
     } else if (button.dataset.drawColor) {
       drawingColor = button.dataset.drawColor;
       document.querySelectorAll<HTMLButtonElement>('[data-draw-color]').forEach(color =>
         color.setAttribute('aria-pressed', String(color.dataset.drawColor === drawingColor)));
     } else {
       setDrawingTool(null);
-      $('#drawing-menu').hidden = true;
-      $('#drawing-toggle').setAttribute('aria-expanded', 'false');
+      drawingMenu.close(true);
     }
   });
   $<HTMLSelectElement>('#drawing-width').addEventListener('change', event => {
@@ -142,12 +126,6 @@ export function mountAnnotations(options: AnnotationOptions) {
   document.querySelectorAll<HTMLButtonElement>('[data-draw-color]').forEach(button => {
     button.style.backgroundColor = button.dataset.drawColor!;
     button.setAttribute('aria-pressed', String(button.dataset.drawColor === drawingColor));
-  });
-  document.addEventListener('pointerdown', event => {
-    if (!(event.target as Element).closest('#drawing-control')) {
-      $('#drawing-menu').hidden = true;
-      $('#drawing-toggle').setAttribute('aria-expanded', 'false');
-    }
   });
   pages.addEventListener('pointerdown', event => {
     if (!drawingTool || (event.button !== 0 && event.pointerType !== 'touch')) return;

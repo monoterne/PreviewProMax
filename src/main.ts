@@ -256,6 +256,7 @@ function setSidebar(visible: boolean) {
   const shown = visible && !!pdf;
   $('#sidebar').hidden = !shown;
   $('#sidebar-toggle').classList.toggle('selected', shown);
+  $('#sidebar-toggle').setAttribute('aria-expanded', String(shown));
   if (wasShown !== shown) window.setTimeout(() => { if (pdf) refreshFitIfNeeded(); }, 40);
 }
 function updatePageUi(revealThumbnail = false) {
@@ -264,7 +265,10 @@ function updatePageUi(revealThumbnail = false) {
   $('#page-total').textContent = `/ ${pdf.numPages}`;
   const previous = thumbs.querySelector<HTMLElement>('.thumbnail.active');
   const active = thumbs.children.item(currentPage - 1) as HTMLElement | null;
-  if (previous !== active) { previous?.classList.remove('active'); active?.classList.add('active'); }
+  if (previous !== active) {
+    previous?.classList.remove('active'); previous?.removeAttribute('aria-current');
+    active?.classList.add('active'); active?.setAttribute('aria-current', 'page');
+  }
   if (revealThumbnail && active && activeTab === 'pages') {
     const item = active.getBoundingClientRect();
     const list = thumbs.getBoundingClientRect();
@@ -562,6 +566,7 @@ function makeThumbnails() {
     const button = document.createElement('button');
     button.className = 'thumbnail';
     button.dataset.page = String(i);
+    button.setAttribute('aria-label', `Page ${i}`);
     button.innerHTML = `<div class="thumbnail-paper"><span class="thumbnail-placeholder"></span></div><span class="thumbnail-number">${i}</span>`;
     setThumbnailSize(button, pageDimensions(i - 1));
     button.addEventListener('click', () => goToPage(i));
