@@ -19,14 +19,26 @@ jobs:
       matrix:
         include:
           - os: macos-15
-            target: mac
+            target: mac-legacy
             bundles: app
             browser: webkit
+            adaptive_icon: false
+            config_args: --config src-tauri/tauri.macos.legacy.conf.json
+          - os: macos-latest
+            target: mac-adaptive
+            bundles: app
+            browser: webkit
+            adaptive_icon: true
+            config_args: --config src-tauri/tauri.macos.conf.json
           - os: windows-latest
             target: win
             bundles: nsis
             browser: chromium
+            adaptive_icon: false
+            config_args: ""
     runs-on: ${{ matrix.os }}
+    env:
+      PREVIEW_PRO_MAX_ADAPTIVE_ICON: ${{ matrix.adaptive_icon }}
     steps:
       - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2.2.0
@@ -39,21 +51,27 @@ jobs:
       - name: Check native macOS webview
         if: runner.os == 'macOS'
         run: bun run test:native
-      - run: bun tauri build --bundles ${{ matrix.bundles }}
+      - run: bun tauri build ${{ matrix.config_args }} --bundles ${{ matrix.bundles }}
       - name: Check adaptive macOS icon
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && matrix.adaptive_icon == true
         shell: bash
         run: |
           app="src-tauri/target/release/bundle/macos/Preview Pro Max.app"
           test -s "$app/Contents/Resources/Assets.car"
           test -s "$app/Contents/Resources/icon.icns"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$app/Contents/Info.plist")" = "PreviewProMax"
+      - name: Check legacy macOS icon
+        if: runner.os == 'macOS' && matrix.adaptive_icon == false
+        shell: bash
+        run: |
+          app="src-tauri/target/release/bundle/macos/Preview Pro Max.app"
+          test -s "$app/Contents/Resources/icon.icns"
       - name: Prepare downloads
         shell: bash
         run: |
           mkdir -p artifacts
           if [ "${{ runner.os }}" = "macOS" ]; then
-            ditto -c -k --sequesterRsrc --keepParent "src-tauri/target/release/bundle/macos/Preview Pro Max.app" "artifacts/PreviewProMax-mac.app.zip"
+            ditto -c -k --sequesterRsrc --keepParent "src-tauri/target/release/bundle/macos/Preview Pro Max.app" "artifacts/PreviewProMax-${{ matrix.target }}.app.zip"
           else
             cp src-tauri/target/release/preview-pro-max.exe artifacts/PreviewProMax-portable.exe
             cp src-tauri/target/release/bundle/nsis/*.exe artifacts/
@@ -64,10 +82,10 @@ jobs:
           path: artifacts/*
           if-no-files-found: error
       - name: Save compiled icon catalog
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && matrix.adaptive_icon == true
         uses: actions/upload-artifact@v7
         with:
-          name: preview-pro-max-icon-catalog
+          name: preview-pro-max-icon-catalog-adaptive
           path: |
             src-tauri/icons/Assets.car
             src-tauri/icons/catalog.json
