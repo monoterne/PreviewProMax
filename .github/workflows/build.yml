@@ -23,22 +23,26 @@ jobs:
             bundles: app
             browser: webkit
             adaptive_icon: false
+            require_pinch: false
             config_args: --config src-tauri/tauri.macos.legacy.conf.json
           - os: macos-latest
             target: mac-adaptive
             bundles: app
             browser: webkit
             adaptive_icon: true
+            require_pinch: true
             config_args: --config src-tauri/tauri.macos.conf.json
           - os: windows-latest
             target: win
             bundles: nsis
             browser: chromium
             adaptive_icon: false
+            require_pinch: false
             config_args: ""
     runs-on: ${{ matrix.os }}
     env:
       PREVIEW_PRO_MAX_ADAPTIVE_ICON: ${{ matrix.adaptive_icon }}
+      PREVIEW_PRO_MAX_REQUIRE_PINCH: ${{ matrix.require_pinch }}
     steps:
       - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2.2.0
