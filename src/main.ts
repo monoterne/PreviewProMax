@@ -5,7 +5,7 @@ import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 import './style.css';
 import { pickDocumentPaths, readDocument, onOpenedDocument, onMenuAction, newWindow, closeWindow, windowReady, getSessions, saveSession, archiveSession, type OpenedDocument, type SavedTab, type SavedWindow } from './desktop';
 import { mountApp } from './app-shell';
-import { releaseCanvases, renderRaster, renderText } from './pdf-rendering';
+import { releaseCanvases, renderLinks, renderRaster, renderText } from './pdf-rendering';
 import { mountZoom, type ZoomPoint } from './zoom';
 import { mountSidebarTabs, mountThemeSwitch } from './controls';
 import { mountDocumentTabs } from './document-tabs';
@@ -422,11 +422,13 @@ async function renderPageContent(shell: HTMLElement, epoch: number) {
       console.error('Unable to extract page text:', error);
     }
     if (epoch !== renderEpoch) { canvas.width = 0; canvas.height = 0; return; }
+    const linkLayer = await renderLinks(page, viewport, pdf, pageNumber => { void goToPage(pageNumber); });
+    if (epoch !== renderEpoch) { canvas.width = 0; canvas.height = 0; return; }
     const content = document.createElement('div');
     content.className = 'page-content';
     content.style.width = `${viewport.width}px`;
     content.style.height = `${viewport.height}px`;
-    content.append(canvas, textLayer);
+    content.append(canvas, textLayer, linkLayer);
     const previous = shell.querySelector<HTMLElement>('.page-content');
     if (previous) {
       previous.remove();
