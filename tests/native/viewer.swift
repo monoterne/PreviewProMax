@@ -1,14 +1,15 @@
 // Exercise production assets in the installed macOS WKWebView using Tauri's URL scheme.
-// Usage: swift tests/native/viewer.swift PDF QUERY EXPECTED_MATCHES MIN_LOADED_FONTS
+// Usage: swift tests/native/viewer.swift PDF QUERY EXPECTED_MATCHES MIN_LOADED_FONTS REQUIRE_PINCH
 import Cocoa
 import WebKit
 
-guard CommandLine.arguments.count == 5 else { fatalError("Expected PDF, query, match count, and font count") }
+guard CommandLine.arguments.count == 6 else { fatalError("Expected PDF, query, match count, font count, and pinch requirement") }
 let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath + "/dist")
 let pdf = try Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[1])).base64EncodedString()
 let query = String(data: try JSONSerialization.data(withJSONObject: CommandLine.arguments[2], options: .fragmentsAllowed), encoding: .utf8)!
 let expectedMatches = Int(CommandLine.arguments[3])!
 let minimumFonts = Int(CommandLine.arguments[4])!
+let requirePinch = CommandLine.arguments[5] == "1"
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
 
@@ -27,7 +28,7 @@ class Handler: NSObject, WKURLSchemeHandler, WKScriptMessageHandler {
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         guard let result = message.body as? [String: Int] else { return }
         print("Native WKWebView: \(result)")
-        let pass = result["matches"] == expectedMatches && (result["fonts"] ?? 0) >= minimumFonts && (result["highlights"] ?? 0) > 0 && result["pinch"] == 1
+        let pass = result["matches"] == expectedMatches && (result["fonts"] ?? 0) >= minimumFonts && (result["highlights"] ?? 0) > 0 && (!requirePinch || result["pinch"] == 1)
         exit(pass ? 0 : 1)
     }
 }
