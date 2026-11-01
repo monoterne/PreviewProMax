@@ -664,6 +664,11 @@ test('contents supports nested entries, named destinations, and keyboard toggles
   await expect(page.locator('#page-number')).toHaveValue('12');
 });
 
+test('links printed in the PDF navigate to internal destinations', async ({ page }) => {
+  await page.locator('.page-shell[data-page="1"] .page-link').click();
+  await expect(page.locator('#page-number')).toHaveValue('12');
+});
+
 
 test('embedded CFF fonts load when the system webview lacks Math.sumPrecise', async ({ page }) => {
   await expect.poll(() => page.evaluate(() => Array.from(document.fonts).filter(font => font.family.startsWith('g_') && font.status === 'loaded').length)).toBeGreaterThan(0);

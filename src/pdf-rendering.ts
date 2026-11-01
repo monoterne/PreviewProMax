@@ -1,5 +1,5 @@
 import './compatibility';
-import { TextLayer, type PDFPageProxy } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import { TextLayer, type PDFDocumentProxy, type PDFPageProxy } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { darkenOutsideImages } from './dark-page';
 
 type Viewport = ReturnType<PDFPageProxy['getViewport']>;
@@ -42,4 +42,51 @@ export async function renderText(page: PDFPageProxy, viewport: Viewport) {
   const text = new TextLayer({ textContentSource: content, container: element, viewport });
   await text.render();
   return { element, divs: text.textDivs as HTMLElement[], strings: text.textContentItemsStr };
+}
+
+type LinkAnnotation = {
+  subtype?: string;
+  rect?: number[];
+  dest?: string | unknown[];
+  url?: string;
+  unsafeUrl?: string;
+  title?: string;
+};
+
+export async function renderLinks(page: PDFPageProxy, viewport: Viewport, pdf: PDFDocumentProxy, navigate: (page: number) => void) {
+  const layer = document.createElement('div');
+  layer.className = 'linkLayer';
+  const annotations = await page.getAnnotations({ intent: 'display' }) as LinkAnnotation[];
+  for (const annotation of annotations) {
+    if (annotation.subtype !== 'Link' || !annotation.rect) continue;
+    const [left, top, right, bottom] = viewport.convertToViewportRectangle(annotation.rect);
+    const link = document.createElement('a');
+    link.className = 'page-link';
+    link.style.left = `${Math.min(left, right)}px`;
+    link.style.top = `${Math.min(top, bottom)}px`;
+    link.style.width = `${Math.abs(right - left)}px`;
+    link.style.height = `${Math.abs(bottom - top)}px`;
+    link.setAttribute('aria-label', annotation.title || 'PDF link');
+    const destination = annotation.dest;
+    if (destination) {
+      link.href = '#';
+      link.onclick = async event => {
+        event.preventDefault();
+        try {
+          const resolved = typeof destination === 'string' ? await pdf.getDestination(destination) : destination;
+          if (!resolved) return;
+          const index = typeof resolved[0] === 'number' ? resolved[0] : await pdf.getPageIndex(resolved[0]);
+          navigate(index + 1);
+        } catch { }
+      };
+    } else {
+      const url = annotation.url || annotation.unsafeUrl;
+      if (!url) continue;
+      link.href = url;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+    }
+    layer.append(link);
+  }
+  return layer;
 }

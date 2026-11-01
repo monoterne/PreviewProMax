@@ -205,6 +205,9 @@ svg { flex: none; }
 .textLayer ::selection { background: rgb(47 111 235 / 35%); }
 .textLayer .search-match { background: rgb(255 193 57 / 50%); }
 .textLayer .search-match.selected { background: rgb(255 157 0 / 85%); }
+.linkLayer { position: absolute; inset: 0; z-index: 4; pointer-events: none; }
+.page-link { position: absolute; pointer-events: all; }
+.page-link:hover { background: rgb(47 111 235 / 12%); }
 
 .welcome { min-height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 32px; text-align: center; }
 .empty-icon { display: grid; place-items: center; width: 44px; height: 44px; margin-bottom: 12px; color: var(--muted); }
