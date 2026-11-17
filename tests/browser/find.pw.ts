@@ -100,6 +100,7 @@ test.beforeEach(async ({ page }) => {
 
 test('fit width can resize during the first render without hiding the document', async ({ page }) => {
   await page.emulateMedia({ colorScheme: 'dark' });
+  await page.setViewportSize({ width: 1330, height: 850 });
   // Hold text extraction so the first page is still rendering when the window resizes.
   await page.addInitScript(() => {
     const postMessage = Worker.prototype.postMessage;
@@ -115,15 +116,45 @@ test('fit width can resize during the first render without hiding the document',
   await page.reload();
   await page.waitForFunction(() => 'resumeText' in window);
   await expect(page.locator('.thumbnail-paper canvas').first()).toBeVisible();
+  await expect(page.locator('#zoom-label')).toHaveText('170%');
+  const first = page.locator('.page-shell').first();
+  await expect(first.locator('canvas')).toBeVisible();
+  const bounds = (await first.boundingBox())!;
+  const clip = { x: Math.ceil(bounds.x + 30), y: Math.ceil(bounds.y + 60), width: 280, height: 180 };
+  expect((await screenshotColors(page, await page.screenshot({ clip }))).hasWhiteInk).toBe(true);
   await page.setViewportSize({ width: 2000, height: 900 });
   await expect(page.locator('#zoom-label')).toHaveText('250%');
-  await page.evaluate(() => (window as Window & { resumeText(): void }).resumeText());
-
-  const first = page.locator('.page-shell').first();
   await expect(first).toHaveAttribute('data-rendered-zoom', '2.5');
+  await page.evaluate(() => (window as Window & { resumeText(): void }).resumeText());
   await expect(first.locator('canvas')).toBeVisible();
   const text = first.getByText('alpha target', { exact: true });
   expect((await screenshotColors(page, await text.screenshot())).hasWhiteInk).toBe(true);
+});
+
+test('document tabs scroll horizontally and keep their controls fully visible', async ({ page }) => {
+  await page.setViewportSize({ width: 760, height: 640 });
+  // Give scrollbars physical space even on a host that uses overlay scrollbars.
+  await page.addStyleTag({ content: `
+    .document-tab-list { scrollbar-width: auto; }
+    .document-tab-list::-webkit-scrollbar { width: 16px; height: 16px; }
+  ` });
+  const list = page.getByRole('tablist', { name: 'Open documents' });
+  for (const extraTabs of [0, 8]) {
+    for (let i = 0; i < extraTabs; i++) await page.locator('#new-tab').click();
+    const metrics = await list.evaluate(el => ({
+      vertical: el.scrollHeight - el.clientHeight,
+      horizontal: el.scrollWidth - el.clientWidth,
+      tabHeight: el.firstElementChild!.getBoundingClientRect().height,
+      availableHeight: el.clientHeight,
+    }));
+    expect(metrics.vertical).toBe(0);
+    expect(metrics.availableHeight).toBeGreaterThanOrEqual(metrics.tabHeight);
+    if (extraTabs) expect(metrics.horizontal).toBeGreaterThan(0);
+    else expect(metrics.horizontal).toBe(0);
+  }
+  await list.getByRole('tab').first().press('End');
+  await expect(list.getByRole('tab').last()).toBeFocused();
+  expect(await list.evaluate(el => el.scrollLeft)).toBeGreaterThan(0);
 });
 
 test('a PDF opened from Finder at launch stays selected after session restore', async ({ page }) => {
