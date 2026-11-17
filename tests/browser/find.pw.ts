@@ -680,8 +680,16 @@ test('embedded CFF fonts load when the system webview lacks Math.sumPrecise', as
 
 
 test('text extraction errors are reported instead of claiming there are no matches', async ({ page }) => {
-  // Recreate the exact runtime failure after compatibility initialization.
-  await page.evaluate(() => { delete (ReadableStream.prototype as any)[Symbol.asyncIterator]; });
+  // Fail extraction on one offscreen page while the other pages still have matches.
+  await page.evaluate(() => {
+    const postMessage = Worker.prototype.postMessage;
+    Worker.prototype.postMessage = function (message, ...options) {
+      if (message?.action === 'GetTextContent' && message.data.pageIndex === 10) {
+        throw new Error('Unable to read fixture page text.');
+      }
+      Reflect.apply(postMessage, this, [message, ...options]);
+    };
+  });
   await page.getByRole('tab', { name: 'Find', exact: true }).click();
   await page.locator('#search-input').fill('target');
   await expect(page.locator('#search-status')).toHaveText('Unable to search this document.');

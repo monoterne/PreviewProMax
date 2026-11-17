@@ -217,7 +217,7 @@ async function closeDocumentTab(id: string) {
   if (activeDocumentId === id) activateDocumentTab(documentTabs[Math.min(index, documentTabs.length - 1)].id);
   else tabBar.update(documentTabs, activeDocumentId);
   queueSessionSave(0);
-  if (closed.pdf) { await Promise.allSettled([...renderJobs]); await closed.pdf.destroy(); }
+  if (closed.pdf) { await Promise.allSettled([...renderJobs]); await closed.pdf.loadingTask.destroy(); }
 }
 
 function toast(message: string, duration = 3500) {
@@ -674,7 +674,7 @@ async function loadDocument(file: OpenedDocument, saved?: SavedTab) {
     } else documentTabs.push(tab);
     activateDocumentTab(tab.id);
   } catch (error) {
-    await loaded.destroy();
+    await loaded.loadingTask.destroy();
     console.error(error);
     toast(error instanceof Error ? error.message : 'Unable to open PDF.');
   }
