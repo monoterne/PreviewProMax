@@ -9,22 +9,30 @@ async function useViewOption(page: Page, selector: string) {
   if (await panel.isVisible()) await page.locator('#view-toggle').click();
 }
 
-async function pageFill(page: Page) {
-  const clip = await page.locator('.page-shell').first().evaluate(element => {
-    const bounds = element.getBoundingClientRect();
-    return { x: Math.round(bounds.left + 8), y: Math.round(bounds.top + 8), width: 2, height: 2 };
-  });
-  const screenshot = await page.screenshot({ clip });
+async function screenshotColors(page: Page, screenshot: Buffer) {
   return page.evaluate(async encoded => {
     const image = new Image();
     image.src = `data:image/png;base64,${encoded}`;
     await image.decode();
     const canvas = document.createElement('canvas');
-    canvas.width = canvas.height = 2;
+    canvas.width = image.width;
+    canvas.height = image.height;
     const context = canvas.getContext('2d')!;
     context.drawImage(image, 0, 0);
-    return Array.from(context.getImageData(0, 0, 1, 1).data).slice(0, 3);
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+    return {
+      corner: Array.from(pixels.slice(0, 3)),
+      hasWhiteInk: pixels.some((red, i) => i % 4 === 0 && red >= 250 && pixels[i + 1] >= 250 && pixels[i + 2] >= 250),
+    };
   }, screenshot.toString('base64'));
+}
+
+async function pageFill(page: Page) {
+  const clip = await page.locator('.page-shell').first().evaluate(element => {
+    const bounds = element.getBoundingClientRect();
+    return { x: Math.round(bounds.left + 8), y: Math.round(bounds.top + 8), width: 2, height: 2 };
+  });
+  return (await screenshotColors(page, await page.screenshot({ clip }))).corner;
 }
 
 test.beforeEach(async ({ page }) => {
@@ -64,6 +72,34 @@ test.beforeEach(async ({ page }) => {
   }, fixture());
   await page.goto('/');
   await expect(page.locator('.page-shell').first()).toHaveAttribute('data-rendered', 'true');
+});
+
+test('fit width can resize during the first render without hiding the document', async ({ page }) => {
+  await page.emulateMedia({ colorScheme: 'dark' });
+  // Hold text extraction so the first page is still rendering when the window resizes.
+  await page.addInitScript(() => {
+    const postMessage = Worker.prototype.postMessage;
+    Worker.prototype.postMessage = function (message, ...options) {
+      if (message?.action === 'GetTextContent' && message.data.pageIndex === 0) {
+        Worker.prototype.postMessage = postMessage;
+        Object.assign(window, { resumeText: () => Reflect.apply(postMessage, this, [message, ...options]) });
+        return;
+      }
+      Reflect.apply(postMessage, this, [message, ...options]);
+    };
+  });
+  await page.reload();
+  await page.waitForFunction(() => 'resumeText' in window);
+  await expect(page.locator('.thumbnail-paper canvas').first()).toBeVisible();
+  await page.setViewportSize({ width: 2000, height: 900 });
+  await expect(page.locator('#zoom-label')).toHaveText('250%');
+  await page.evaluate(() => (window as Window & { resumeText(): void }).resumeText());
+
+  const first = page.locator('.page-shell').first();
+  await expect(first).toHaveAttribute('data-rendered-zoom', '2.5');
+  await expect(first.locator('canvas')).toBeVisible();
+  const text = first.getByText('alpha target', { exact: true });
+  expect((await screenshotColors(page, await text.screenshot())).hasWhiteInk).toBe(true);
 });
 
 test('sidebar and selected thumbnails keep their size when switching tabs', async ({ page }) => {

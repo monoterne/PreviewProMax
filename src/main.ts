@@ -182,14 +182,8 @@ function activateDocumentTab(id: string) {
   renderSearchResults();
   if (pdf) {
     rebuildPages(); makeThumbnails(); updatePageUi();
-    // Reveal a tab as one frame once its target page is ready. This avoids
-    // showing mismatched page placeholders while sizes and text settle.
-    pages.style.visibility = 'hidden';
-    const epoch = renderEpoch;
     const target = pages.querySelector<HTMLElement>(`.page-shell[data-page="${currentPage}"]`)!;
-    void renderPage(target, epoch).finally(() => {
-      if (epoch === renderEpoch) pages.style.visibility = '';
-    });
+    void renderPage(target, renderEpoch);
   }
   viewer.scrollTo({ top: tab.top, left: tab.left, behavior: 'auto' });
   thumbs.scrollTop = tab.thumbnailTop;
@@ -367,7 +361,6 @@ function observePages() {
 }
 function rebuildPages() {
   if (!pdf) return;
-  pages.style.visibility = '';
   renderEpoch++;
   navigationEpoch++;
   pageObserver?.disconnect();
