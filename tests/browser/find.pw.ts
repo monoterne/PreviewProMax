@@ -52,18 +52,42 @@ test.beforeEach(async ({ page }) => {
       }
     };
     let consumed = false;
+    const callbacks = new Map<number, (event: unknown) => void>();
+    const listeners = new Map<string, number>();
+    const pendingPaths: string[] = [];
     Object.assign(window, {
+      __pendingPaths: pendingPaths,
+      __emitDesktopEvent(event: string, payload?: unknown) {
+        const id = listeners.get(event)!;
+        callbacks.get(id)!({ event, id, payload });
+      },
       __TAURI_INTERNALS__: {
         metadata: { currentWindow: { label: 'main' }, currentWebview: { label: 'main' } },
-        transformCallback: () => 1,
+        transformCallback(callback: (event: unknown) => void) {
+          const id = callbacks.size + 1;
+          callbacks.set(id, callback);
+          return id;
+        },
         invoke: async (command: string, args?: any) => {
-          if (command === 'take_pending_document') { if (consumed || localStorage.getItem('__skipPending')) return null; consumed = true; return 'find-fixture.pdf'; }
-          if (command === 'get_sessions') return JSON.parse(localStorage.getItem('__testSessions') || '{"restore":null,"recent":[]}');
+          if (command === 'plugin:event|listen') { listeners.set(args.event, args.handler); return args.handler; }
+          if (command === 'take_pending_document') {
+            if (consumed || localStorage.getItem('__skipPending')) return pendingPaths.shift() ?? null;
+            consumed = true;
+            (window as any).__initialPathTaken = true;
+            return 'find-fixture.pdf';
+          }
+          if (command === 'get_sessions') {
+            if (localStorage.getItem('__holdStartup')) await new Promise(resolve => Object.assign(window, { __resumeStartup: resolve }));
+            return JSON.parse(localStorage.getItem('__testSessions') || '{"restore":null,"recent":[]}');
+          }
           if (command === 'save_session') { (window as any).__savedSession = args?.session; return null; }
           if (command === 'archive_session') return null;
           if (command === 'plugin:dialog|open') return ['second.pdf', 'third.pdf'];
           if (command === 'new_window') { (window as any).__newWindows = ((window as any).__newWindows || 0) + 1; return 'viewer-1'; }
-          if (command === 'read_document') return new Uint8Array(bytes);
+          if (command === 'read_document') {
+            if (args.path === 'missing.pdf') throw new Error('File is unavailable');
+            return new Uint8Array(bytes);
+          }
           return 1;
         },
       },
@@ -101,6 +125,42 @@ test('fit width can resize during the first render without hiding the document',
   const text = first.getByText('alpha target', { exact: true });
   expect((await screenshotColors(page, await text.screenshot())).hasWhiteInk).toBe(true);
 });
+
+test('a PDF opened from Finder at launch stays selected after session restore', async ({ page }) => {
+  await page.evaluate(() => {
+    localStorage.setItem('__holdStartup', 'true');
+    localStorage.setItem('__testSessions', JSON.stringify({ recent: [], restore: {
+      id: 'previous', active: 0, tabs: [{ path: 'previous.pdf', page: 1, zoom: 1, fit: true, rotation: 0, top: 0, left: 0 }],
+    } }));
+  });
+  await page.reload();
+  await page.waitForFunction(() => (window as any).__initialPathTaken && (window as any).__resumeStartup);
+  await page.evaluate(() => (window as any).__resumeStartup());
+  await expect(page.getByRole('tab', { name: 'previous.pdf' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'find-fixture.pdf' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('.page-shell').first().locator('canvas')).toBeVisible();
+});
+
+for (const source of ['Finder', 'drop']) {
+  test(`a ${source} batch opens every readable PDF in the running window`, async ({ page }) => {
+    await page.evaluate(source => {
+      const native = window as any;
+      const paths = ['first.pdf', 'missing.pdf', 'last.pdf'];
+      if (source === 'Finder') {
+        native.__pendingPaths.push(...paths);
+        native.__emitDesktopEvent('open-document-path');
+      } else {
+        const payload = { paths, position: { x: 20, y: 20 } };
+        native.__emitDesktopEvent('tauri://drag-enter', payload);
+        native.__emitDesktopEvent('tauri://drag-drop', payload);
+      }
+    }, source);
+    await expect(page.locator('.document-tab-title')).toHaveText(['find-fixture.pdf', 'first.pdf', 'last.pdf']);
+    await expect(page.getByRole('tab', { name: 'last.pdf' })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.locator('.page-shell').first().locator('canvas')).toBeVisible();
+    await expect(page.locator('#drop-overlay')).toBeHidden();
+  });
+}
 
 test('sidebar and selected thumbnails keep their size when switching tabs', async ({ page }) => {
   const thumbnail = page.locator('.thumbnail-paper').first();

@@ -22,7 +22,7 @@ export const newWindow = () => invoke<string>('new_window');
 export const onMenuAction = (callback: (action: string) => void) => listen<string>('menu-action', event => callback(event.payload));
 export const closeWindow = () => invoke<void>('close_window');
 
-export function onOpenedDocument(callback: (file: OpenedDocument) => Promise<void>, onError: (error: unknown) => void): () => void {
+export function onOpenPath(callback: (path: string) => Promise<void>, onError: (error: unknown) => void): () => void {
   let disposed = false;
   let consuming = false;
   let requested = false;
@@ -36,7 +36,7 @@ export function onOpenedDocument(callback: (file: OpenedDocument) => Promise<voi
         requested = false;
         let path: string | null;
         while (!disposed && (path = await invoke<string | null>('take_pending_document'))) {
-          await callback(await readDocument(path));
+          await callback(path);
         }
       }
     } catch (error) { onError(error); }
@@ -45,7 +45,7 @@ export function onOpenedDocument(callback: (file: OpenedDocument) => Promise<voi
   void listen('open-document-path', () => { void consumePending(); }).then(stop => {
     if (disposed) stop();
     else { unlisten = stop; void consumePending(); }
-  });
+  }).catch(onError);
   return () => { disposed = true; unlisten?.(); };
 }
 

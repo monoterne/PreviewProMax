@@ -206,34 +206,36 @@ fn close_window(window: WebviewWindow) -> Result<(), String> {
     window.close().map_err(|e| e.to_string())
 }
 
-fn queue_document(app: &tauri::AppHandle, path: String) {
-    if !is_file(&path) {
-        return;
+fn document_window_label(app: &tauri::AppHandle) -> Option<String> {
+    // Launch Services can deliver Opened before Tauri creates the main window.
+    if app.try_state::<SessionManager>().is_none() {
+        return Some("main".into());
     }
     let windows = app.webview_windows();
-    let window = windows
+    windows
         .values()
         .find(|w| w.is_focused().unwrap_or(false))
         .or_else(|| windows.get("main"))
         .or_else(|| windows.values().next())
-        .cloned()
-        .or_else(|| {
-            create_window(app.clone(), None)
-                .ok()
-                .and_then(|label| app.get_webview_window(&label))
-        });
-    let Some(window) = window else {
+        .map(|window| window.label().to_owned())
+        .or_else(|| create_window(app.clone(), None).ok())
+}
+
+fn queue_document(app: &tauri::AppHandle, path: String) {
+    if !is_file(&path) {
+        return;
+    }
+    let Some(label) = document_window_label(app) else {
         return;
     };
     if let Ok(mut pending) = app.state::<PendingDocuments>().0.lock() {
-        pending
-            .entry(window.label().to_string())
-            .or_default()
-            .push_back(path);
+        pending.entry(label.clone()).or_default().push_back(path);
     }
-    let _ = app.emit_to(window.label(), "open-document-path", ());
-    if window.is_visible().unwrap_or(false) {
-        let _ = window.set_focus();
+    if let Some(window) = app.get_webview_window(&label) {
+        let _ = app.emit_to(label.as_str(), "open-document-path", ());
+        if window.is_visible().unwrap_or(false) {
+            let _ = window.set_focus();
+        }
     }
 }
 
