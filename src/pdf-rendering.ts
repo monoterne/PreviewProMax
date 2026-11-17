@@ -59,7 +59,9 @@ export async function renderLinks(page: PDFPageProxy, viewport: Viewport, pdf: P
   const annotations = await page.getAnnotations({ intent: 'display' }) as LinkAnnotation[];
   for (const annotation of annotations) {
     if (annotation.subtype !== 'Link' || !annotation.rect) continue;
-    const [left, top, right, bottom] = viewport.convertToViewportRectangle(annotation.rect);
+    const [x1, y1, x2, y2] = annotation.rect;
+    const [left, top] = viewport.convertToViewportPoint(x1, y1);
+    const [right, bottom] = viewport.convertToViewportPoint(x2, y2);
     const link = document.createElement('a');
     link.className = 'page-link';
     link.style.left = `${Math.min(left, right)}px`;
