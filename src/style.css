@@ -124,10 +124,10 @@ svg { flex: none; }
 .theme-switch-thumb { position: absolute; top: 2px; left: 2px; display: block; width: 14px; height: 14px; background: #fff; border-radius: var(--radius-round); }
 .theme-switch-thumb[data-state="checked"] { left: 14px; }
 
-.document-bar { height: 40px; flex: none; display: flex; align-items: center; padding: 0 var(--space-3); background: transparent; border-bottom: 1px solid var(--border); }
-#document-tabs-root { flex: 1; min-width: 0; height: 100%; }
-.document-tabs { display: flex; align-items: center; gap: var(--space-1); height: 100%; }
-.document-tab-list { display: flex; align-items: center; gap: var(--space-1); overflow-x: auto; scrollbar-width: thin; min-width: 0; height: 100%; padding: var(--space-1) 0; }
+.document-bar { flex: none; display: flex; align-items: center; padding: 0 var(--space-3); background: transparent; border-bottom: 1px solid var(--border); }
+#document-tabs-root { flex: 1; min-width: 0; }
+.document-tabs { display: flex; align-items: center; gap: var(--space-1); }
+.document-tab-list { display: flex; align-items: center; gap: var(--space-1); overflow: auto hidden; scrollbar-width: thin; min-width: 0; padding: var(--space-1) 0; }
 .document-tab { position: relative; display: flex; flex: 0 1 200px; min-width: 120px; max-width: 220px; height: 32px; align-items: center; border: 1px solid transparent; border-radius: var(--radius-md); }
 .document-tab:hover { background: var(--surface-hover); }
 .document-tab[data-active="true"] { background: var(--surface); border-color: var(--border); }

@@ -59,6 +59,7 @@ let pageObserver: IntersectionObserver | null = null;
 let thumbObserver: IntersectionObserver | null = null;
 const pageRenders = new WeakMap<HTMLElement, { epoch: number; task: Promise<void> }>();
 const renderedText = new WeakMap<HTMLElement, { divs: HTMLElement[]; strings: string[] }>();
+const textLayerReady = new WeakMap<Element, Promise<void>>();
 const annotationTools = mountAnnotations({
   pages, viewer, renderedText, enabled: () => !!pdf, getRotation: () => rotation, toast,
 });
@@ -377,15 +378,18 @@ function rebuildPages() {
   updatePageSizes();
   observePages();
 }
+function trackRender(job: Promise<void>): Promise<void> {
+  const task = job.finally(() => renderJobs.delete(task));
+  renderJobs.add(task);
+  return task;
+}
 function renderPage(shell: HTMLElement, epoch: number): Promise<void> {
   if (epoch !== renderEpoch || shell.parentElement !== pages) return Promise.resolve();
   const pending = pageRenders.get(shell);
   if (pending) return pending.epoch === epoch ? pending.task : pending.task.then(() => renderPage(shell, renderEpoch));
-  const task = renderPageContent(shell, epoch).finally(() => {
+  const task = trackRender(renderPageContent(shell, epoch).finally(() => {
     if (pageRenders.get(shell)?.task === task) pageRenders.delete(shell);
-    renderJobs.delete(task);
-  });
-  renderJobs.add(task);
+  }));
   pageRenders.set(shell, { epoch, task });
   return task;
 }
@@ -405,23 +409,11 @@ async function renderPageContent(shell: HTMLElement, epoch: number) {
     const viewport = page.getViewport({ scale: zoom, rotation: (page.rotate + rotation) % 360 });
     const canvas = await renderRaster(page, viewport, Math.min(window.devicePixelRatio || 1, 2), darkMode && !invertImages);
     if (epoch !== renderEpoch) { canvas.width = 0; canvas.height = 0; return; }
-    let textLayer = document.createElement('div');
-    try {
-      const text = await renderText(page, viewport);
-      textLayer = text.element;
-      if (epoch === renderEpoch) renderedText.set(shell, { divs: text.divs, strings: text.strings });
-    } catch (error) {
-      if (epoch === renderEpoch) renderedText.delete(shell);
-      console.error('Unable to extract page text:', error);
-    }
-    if (epoch !== renderEpoch) { canvas.width = 0; canvas.height = 0; return; }
-    const linkLayer = await renderLinks(page, viewport, pdf, pageNumber => { void goToPage(pageNumber); });
-    if (epoch !== renderEpoch) { canvas.width = 0; canvas.height = 0; return; }
     const content = document.createElement('div');
     content.className = 'page-content';
     content.style.width = `${viewport.width}px`;
     content.style.height = `${viewport.height}px`;
-    content.append(canvas, textLayer, linkLayer);
+    content.append(canvas);
     const previous = shell.querySelector<HTMLElement>('.page-content');
     if (previous) {
       previous.remove();
@@ -431,8 +423,19 @@ async function renderPageContent(shell: HTMLElement, epoch: number) {
     shell.prepend(content);
     shell.dataset.rendered = 'true';
     shell.dataset.renderedZoom = String(zoom);
-    highlightVisibleText(shell);
+    renderedText.delete(shell);
     annotationTools.paintDrawings(shell);
+    // Text and links belong to this raster, even if a zoom or tab switch replaces it.
+    const textReady = renderText(page, viewport).then(text => {
+      if (!content.isConnected) return;
+      content.append(text.element);
+      renderedText.set(shell, { divs: text.divs, strings: text.strings });
+      highlightVisibleText(shell);
+    }).catch(error => console.error('Unable to extract page text:', error));
+    textLayerReady.set(content, trackRender(textReady));
+    void trackRender(renderLinks(page, viewport, pdf, pageNumber => { void goToPage(pageNumber); }).then(links => {
+      if (content.isConnected) content.append(links);
+    }).catch(error => console.error('Unable to load page links:', error)));
   } catch (error) {
     if (epoch === renderEpoch) shell.querySelector('.page-loading')?.replaceChildren('Unable to render this page');
     console.error(error);
@@ -528,6 +531,8 @@ async function selectSearchHit(index: number) {
   const shell = pages.querySelector<HTMLElement>(`.page-shell[data-page="${hit.page}"]`);
   if (!shell) return;
   await renderPage(shell, renderEpoch);
+  const content = shell.querySelector('.page-content');
+  if (content) await textLayerReady.get(content);
   if (epoch !== navigationEpoch || selectedHit !== hit) return;
   highlightVisibleText(shell);
   currentPage = hit.page;
@@ -589,9 +594,7 @@ function makeThumbnails() {
 }
 function renderThumbnail(button: HTMLElement, epoch: number): Promise<void> {
   if (epoch !== thumbnailEpoch || button.parentElement !== thumbs) return Promise.resolve();
-  const task = renderThumbnailContent(button, epoch).finally(() => renderJobs.delete(task));
-  renderJobs.add(task);
-  return task;
+  return trackRender(renderThumbnailContent(button, epoch));
 }
 async function renderThumbnailContent(button: HTMLElement, epoch: number) {
   if (!pdf || button.dataset.rendered) return;
