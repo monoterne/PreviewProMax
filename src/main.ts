@@ -3,7 +3,7 @@ import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 import './style.css';
-import { pickDocumentPaths, readDocument, onOpenedDocument, onMenuAction, newWindow, closeWindow, windowReady, getSessions, saveSession, archiveSession, type OpenedDocument, type SavedTab, type SavedWindow } from './desktop';
+import { pickDocumentPaths, readDocument, onOpenPath, onMenuAction, newWindow, closeWindow, windowReady, getSessions, saveSession, archiveSession, type OpenedDocument, type SavedTab, type SavedWindow } from './desktop';
 import { mountApp } from './app-shell';
 import { releaseCanvases, renderLinks, renderRaster, renderText } from './pdf-rendering';
 import { mountZoom, type ZoomPoint } from './zoom';
@@ -99,7 +99,7 @@ function renderRecentWindows() {
     const names = saved.tabs.map(tab => tab.path.split(/[\\/]/).pop() || 'Document');
     button.textContent = names.length > 3 ? `${names.slice(0, 3).join(', ')} and ${names.length - 3} more` : names.join(', ');
     button.title = names.join('\n');
-    button.addEventListener('click', () => { void restoreSavedWindow(saved); });
+    button.addEventListener('click', () => { void queueOpen(() => restoreSavedWindow(saved)); });
     list.appendChild(button);
   }
   section.hidden = !list.childElementCount;
@@ -613,10 +613,20 @@ async function renderThumbnailContent(button: HTMLElement, epoch: number) {
   } catch { /* Keep the placeholder until the page is visible again. */ }
   finally { if (button.dataset.rendered === 'loading') button.dataset.rendered = ''; }
 }
-function openDocument(file: OpenedDocument, saved?: SavedTab): Promise<void> {
-  const pending = openQueue.then(() => loadDocument(file, saved));
-  openQueue = pending.catch(error => toast(String(error)));
-  return pending;
+function showOpenError(error: unknown) {
+  toast(error instanceof Error ? error.message : String(error), 6000);
+}
+function queueOpen(work: () => Promise<void>) {
+  openQueue = openQueue.then(work).catch(showOpenError);
+  return openQueue;
+}
+function openPaths(paths: string[]) {
+  return queueOpen(async () => {
+    for (const path of paths) {
+      try { await loadDocument(await readDocument(path)); }
+      catch (error) { showOpenError(error); }
+    }
+  });
 }
 async function loadDocument(file: OpenedDocument, saved?: SavedTab) {
   const bytes = file.bytes instanceof Uint8Array ? file.bytes : new Uint8Array(file.bytes);
@@ -674,7 +684,7 @@ async function loadDocument(file: OpenedDocument, saved?: SavedTab) {
 }
 async function pickDocument() {
   try {
-    for (const path of await pickDocumentPaths()) await openDocument(await readDocument(path));
+    await openPaths(await pickDocumentPaths());
   } catch (error) { toast(error instanceof Error ? error.message : 'Unable to open file.'); }
 }
 
@@ -688,7 +698,7 @@ async function restoreSavedWindow(saved: SavedWindow, startup = false) {
   try {
     for (const tab of saved.tabs) {
       const before = activeDocumentId;
-      try { await openDocument(await readDocument(tab.path), tab); }
+      try { await loadDocument(await readDocument(tab.path), tab); }
       catch { /* A missing file is reported with the other unavailable tabs below. */ }
       const opened = activeDocumentId === before ? null : activeDocumentId;
       if (!opened) unavailable++;
@@ -860,15 +870,10 @@ void onMenuAction(action => {
   if (action === 'open') void pickDocument();
   if (action === 'find' && pdf) { setSidebar(true); showTab('search'); }
 }).catch(error => console.error('Unable to register menu actions:', error));
-onOpenedDocument(openDocument, error => toast(error instanceof Error ? error.message : 'Unable to open file.', 6000));
-void getSessions().then(info => {
-  recentWindows = info.recent;
-  renderRecentWindows();
-  if (info.restore) void restoreSavedWindow(info.restore, true);
-}).catch(error => console.error('Unable to load previous windows:', error));
+onOpenPath(path => openPaths([path]), showOpenError);
 let lastDropPath = '';
 let lastDropTime = 0;
-void getCurrentWebview().onDragDropEvent(event => {
+const dropListenerReady = getCurrentWebview().onDragDropEvent(event => {
   const overlay = $('#drop-overlay');
   if (event.payload.type === 'enter') {
     overlay.hidden = false;
@@ -883,12 +888,17 @@ void getCurrentWebview().onDragDropEvent(event => {
     if (path === lastDropPath && now - lastDropTime < 500) return;
     lastDropPath = path;
     lastDropTime = now;
-    void (async () => { for (const path of paths) await openDocument(await readDocument(path)); })().catch(error => {
-      toast(error instanceof Error ? error.message : 'Unable to open file.', 6000);
-    });
+    void openPaths(paths);
   }
 }).catch(error => console.error('Unable to listen for file drops:', error));
 
-// Hidden native webviews may suspend animation frames. Reveal on the next task,
-// once controls and theme are initialized; the native background matches the UI.
-window.setTimeout(() => { void windowReady(darkMode).catch(console.error); }, 0);
+// Reserve the first turn in this window's open queue before native events arrive.
+// Show the themed window before restoring PDFs, which may prompt for a password.
+void queueOpen(async () => {
+  await dropListenerReady;
+  await windowReady(darkMode).catch(console.error);
+  const info = await getSessions();
+  recentWindows = info.recent;
+  renderRecentWindows();
+  if (info.restore) await restoreSavedWindow(info.restore, true);
+});
