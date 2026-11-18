@@ -22,26 +22,22 @@ jobs:
             target: mac-legacy
             bundles: app
             browser: webkit
-            adaptive_icon: false
             require_pinch: false
             config_args: --config src-tauri/tauri.macos.legacy.conf.json
           - os: macos-latest
             target: mac-adaptive
             bundles: app
             browser: webkit
-            adaptive_icon: true
             require_pinch: true
             config_args: --config src-tauri/tauri.macos.conf.json
           - os: windows-latest
             target: win
             bundles: nsis
             browser: chromium
-            adaptive_icon: false
             require_pinch: false
             config_args: ""
     runs-on: ${{ matrix.os }}
     env:
-      PREVIEW_PRO_MAX_ADAPTIVE_ICON: ${{ matrix.adaptive_icon }}
       PREVIEW_PRO_MAX_REQUIRE_PINCH: ${{ matrix.require_pinch }}
     steps:
       - uses: actions/checkout@v7
@@ -56,20 +52,16 @@ jobs:
         if: runner.os == 'macOS'
         run: bun run test:native
       - run: bun tauri build ${{ matrix.config_args }} --bundles ${{ matrix.bundles }}
-      - name: Check adaptive macOS icon
-        if: runner.os == 'macOS' && matrix.adaptive_icon == true
-        shell: bash
-        run: |
-          app="src-tauri/target/release/bundle/macos/Preview Pro Max.app"
-          test -s "$app/Contents/Resources/Assets.car"
-          test -s "$app/Contents/Resources/icon.icns"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$app/Contents/Info.plist")" = "PreviewProMax"
-      - name: Check legacy macOS icon
-        if: runner.os == 'macOS' && matrix.adaptive_icon == false
+      - name: Check macOS bundle icon
+        if: runner.os == 'macOS'
         shell: bash
         run: |
           app="src-tauri/target/release/bundle/macos/Preview Pro Max.app"
           test -s "$app/Contents/Resources/icon.icns"
+          if [[ "${{ matrix.target }}" == mac-adaptive ]]; then
+            test -s "$app/Contents/Resources/Assets.car"
+            test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$app/Contents/Info.plist")" = PreviewProMax
+          fi
       - name: Prepare downloads
         shell: bash
         run: |
@@ -86,7 +78,7 @@ jobs:
           path: artifacts/*
           if-no-files-found: error
       - name: Save compiled icon catalog
-        if: runner.os == 'macOS' && matrix.adaptive_icon == true
+        if: matrix.target == 'mac-adaptive'
         uses: actions/upload-artifact@v7
         with:
           name: preview-pro-max-icon-catalog-adaptive
