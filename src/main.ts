@@ -49,7 +49,8 @@ let searchAbort: AbortController | undefined;
 let hits: SearchHit[] = [];
 let selectedHit: SearchHit | null = null;
 let activeSearchQuery = '';
-let searchRunning = false;
+type SearchState = 'idle' | 'searching' | 'failed';
+let searchState: SearchState = 'idle';
 let selectedHitIndex = -1;
 let darkMode = systemTheme.matches;
 let invertImages = savedInvertImages;
@@ -67,7 +68,7 @@ const annotationTools = mountAnnotations({
 type DocumentTab = {
   id: string; name: string; path: string | null; pdf: PdfDocument | null; page: number; zoom: number;
   rotation: number; fit: boolean; dimensions: Dimensions[]; top: number; left: number;
-  query: string; activeQuery: string; searchPending: boolean; hits: SearchHit[]; selected: number;
+  query: string; activeQuery: string; searchState: SearchState; hits: SearchHit[]; selected: number;
   sidebarTab: SidebarTab; thumbnailTop: number; resultsTop: number;
   annotationKey: string;
 };
@@ -75,7 +76,7 @@ let nextDocumentId = 1;
 function emptyDocumentTab(): DocumentTab {
   return { id: String(nextDocumentId++), name: 'New tab', path: null, pdf: null, page: 1, zoom: 1.25,
     rotation: 0, fit: true, dimensions: [], top: 0, left: 0, query: '', activeQuery: '',
-    searchPending: false, hits: [], selected: -1, sidebarTab: 'pages', thumbnailTop: 0, resultsTop: 0, annotationKey: '' };
+    searchState: 'idle', hits: [], selected: -1, sidebarTab: 'pages', thumbnailTop: 0, resultsTop: 0, annotationKey: '' };
 }
 const documentTabs: DocumentTab[] = [emptyDocumentTab()];
 let activeDocumentId = documentTabs[0].id;
@@ -146,7 +147,7 @@ function saveDocumentTab() {
   Object.assign(tab, { pdf, name: pdf ? documentName : 'New tab', page: currentPage, zoom,
     rotation, fit: fitWidth, dimensions, top: viewer.scrollTop, left: viewer.scrollLeft,
     query: $<HTMLInputElement>('#search-input').value, activeQuery: activeSearchQuery,
-    hits, searchPending: searchRunning, selected: selectedHitIndex, sidebarTab: activeTab,
+    hits, searchState, selected: selectedHitIndex, sidebarTab: activeTab,
     thumbnailTop: thumbs.scrollTop, resultsTop: $('#search-results').scrollTop });
 }
 function activateDocumentTab(id: string) {
@@ -165,7 +166,7 @@ function activateDocumentTab(id: string) {
   pdf = tab.pdf; documentName = tab.name; currentPage = tab.page;
   annotationTools.activate(tab.annotationKey);
   zoom = tab.zoom; rotation = tab.rotation; fitWidth = tab.fit; dimensions = tab.dimensions;
-  hits = tab.hits; activeSearchQuery = tab.activeQuery; searchRunning = false;
+  hits = tab.hits; activeSearchQuery = tab.activeQuery; searchState = tab.searchState;
   selectedHitIndex = tab.selected; selectedHit = hits[selectedHitIndex] || null;
   $<HTMLInputElement>('#search-input').value = tab.query;
   showTab(tab.sidebarTab, false);
@@ -189,7 +190,7 @@ function activateDocumentTab(id: string) {
   viewer.scrollTo({ top: tab.top, left: tab.left, behavior: 'auto' });
   thumbs.scrollTop = tab.thumbnailTop;
   $('#search-results').scrollTop = tab.resultsTop;
-  if (pdf && tab.query && (tab.searchPending || tab.query !== tab.activeQuery)) void searchDocument();
+  if (pdf && tab.query && (tab.searchState === 'searching' || tab.query.trim() !== tab.activeQuery)) void searchDocument();
   if (previousPdf && previousPdf !== pdf) {
     void Promise.allSettled([...renderJobs]).then(() => {
       if (pdf !== previousPdf && documentTabs.some(item => item.pdf === previousPdf)) {
@@ -503,7 +504,10 @@ function scrollToSelectedMatch(shell: HTMLElement) {
   return true;
 }
 function updateSearchStatus() {
-  $('#search-status').textContent = hits.length
+  const status = $('#search-status');
+  if (searchState === 'failed') status.textContent = 'Unable to search this document.';
+  else if (searchState === 'searching') status.textContent = 'Searching…';
+  else status.textContent = hits.length
     ? selectedHitIndex >= 0 ? `${selectedHitIndex + 1} of ${hits.length} matches` : `${hits.length} ${hits.length === 1 ? 'match' : 'matches'}`
     : activeSearchQuery ? 'No matches found' : 'Enter text to search.';
   $<HTMLButtonElement>('#previous-match').disabled = !hits.length;
@@ -727,21 +731,21 @@ async function searchDocument() {
   selectedHit = null;
   selectedHitIndex = -1;
   activeSearchQuery = query;
-  searchRunning = !!query;
+  searchState = query ? 'searching' : 'idle';
   $('#search-results').innerHTML = '';
   pages.querySelectorAll<HTMLElement>('.page-shell').forEach(highlightVisibleText);
-  if (!query) { $('#search-status').textContent = 'Enter text to search.'; return; }
-  $('#search-status').textContent = 'Searching…';
+  updateSearchStatus();
+  if (!query) return;
   try {
     const nextHits = await searchPdf(sourcePdf, query, abort.signal);
     if (epoch !== searchEpoch || sourcePdf !== pdf) return;
     hits = nextHits;
-    searchRunning = false;
+    searchState = 'idle';
     renderSearchResults();
   } catch (error) {
     if (abort.signal.aborted || epoch !== searchEpoch) return;
-    searchRunning = false;
-    $('#search-status').textContent = 'Unable to search this document.';
+    searchState = 'failed';
+    updateSearchStatus();
     console.error('PDF search failed:', error);
   }
 }
@@ -807,7 +811,7 @@ $<HTMLInputElement>('#search-input').addEventListener('input', () => {
   selectedHit = null;
   selectedHitIndex = -1;
   activeSearchQuery = '';
-  searchRunning = false;
+  searchState = 'idle';
   $('#search-results').replaceChildren();
   updateSearchStatus();
   pages.querySelectorAll<HTMLElement>('.page-shell').forEach(highlightVisibleText);
