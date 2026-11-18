@@ -1,10 +1,13 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "bundle": {
-    "targets": ["deb"],
+    "targets": ["deb", "rpm"],
     "category": "Productivity",
     "linux": {
       "deb": {
+        "desktopTemplate": "linux/preview-pro-max.desktop"
+      },
+      "rpm": {
         "desktopTemplate": "linux/preview-pro-max.desktop"
       }
     }
