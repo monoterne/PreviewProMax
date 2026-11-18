@@ -1,7 +1,7 @@
 [package]
 name = "preview-pro-max"
 version = "0.2.2"
-description = "Desktop PDF viewer for macOS and Windows"
+description = "Desktop PDF viewer for Linux, macOS and Windows"
 repository = "https://github.com/monoterne/PreviewProMax"
 edition = "2024"
 rust-version = "1.90"
