@@ -1,7 +1,8 @@
 import type { PDFDocumentProxy } from 'pdfjs-dist';
+import type { PdfDestination } from './pdf-rendering';
 
 let generation = 0;
-export async function renderOutline(node: HTMLElement, pdf: PDFDocumentProxy | null, navigate: (page: number) => void) {
+export async function renderOutline(node: HTMLElement, pdf: PDFDocumentProxy | null, navigate: (pdf: PDFDocumentProxy, destination: PdfDestination) => Promise<void>) {
   const current = ++generation;
   node.textContent = pdf ? 'Loading contents…' : 'Open a PDF to see its contents.';
   if (!pdf) return;
@@ -18,12 +19,9 @@ export async function renderOutline(node: HTMLElement, pdf: PDFDocumentProxy | n
         const button = document.createElement('button'); button.className = 'outline-link'; button.textContent = item.title || 'Untitled';
         button.disabled = !item.dest;
         button.onclick = async () => {
-          try {
-            const dest = typeof item.dest === 'string' ? await pdf.getDestination(item.dest) : item.dest;
-            if (!dest || current !== generation) return;
-            const index = typeof dest[0] === 'number' ? dest[0] : await pdf.getPageIndex(dest[0]);
-            if (current === generation) navigate(index + 1);
-          } catch { if (current === generation) button.title = 'This destination is unavailable.'; }
+          if (current !== generation || !item.dest) return;
+          try { await navigate(pdf, item.dest); }
+          catch { if (current === generation) button.title = 'This destination is unavailable.'; }
         };
         row.append(button); li.append(row);
         if (item.items.length) {
