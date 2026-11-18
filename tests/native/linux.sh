@@ -1,14 +1,17 @@
 # Exercise the installed desktop entry and single-instance forwarding on an isolated display.
 set -euo pipefail
+fixture=${1:?Pass the path to the smoke test PDF}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 export XDG_CONFIG_HOME="$work/config" XDG_DATA_HOME="$work/data" XDG_CACHE_HOME="$work/cache"
+export XDG_RUNTIME_DIR="$work/runtime"
+mkdir -m 700 "$XDG_RUNTIME_DIR"
 export GDK_BACKEND=x11 LIBGL_ALWAYS_SOFTWARE=1
-desktop=$(dpkg -L preview-pro-max | sed -n '/^\/usr\/share\/applications\/.*\.desktop$/p')
+desktop='/usr/share/applications/Preview Pro Max.desktop'
 desktop-file-validate "$desktop"
 grep -q '^MimeType=.*application/pdf;' "$desktop"
 mkdir -p "$work/other"
-bun -e 'import { fixture } from "./tests/fixtures/pdf"; await Bun.write(process.argv[1], new Uint8Array(fixture()))' "$work/first file.pdf"
+cp "$fixture" "$work/first file.pdf"
 cp "$work/first file.pdf" "$work/second.pdf"
 cp "$work/first file.pdf" "$work/other/forwarded file.pdf"
 session="$XDG_CONFIG_HOME/com.previewpromax.viewer/sessions.json"
