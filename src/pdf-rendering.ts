@@ -1,5 +1,5 @@
 import './compatibility';
-import { TextLayer, type PDFDocumentProxy, type PDFPageProxy } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import { TextLayer, type PDFPageProxy } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { darkenOutsideImages } from './dark-page';
 
 type Viewport = ReturnType<PDFPageProxy['getViewport']>;
@@ -44,15 +44,17 @@ export async function renderText(page: PDFPageProxy, viewport: Viewport) {
   return { element, divs: text.textDivs as HTMLElement[], strings: text.textContentItemsStr };
 }
 
+export type PdfDestination = string | unknown[];
+
 type LinkAnnotation = {
   subtype?: string;
   rect?: number[];
-  dest?: string | unknown[];
+  dest?: PdfDestination;
   url?: string;
   title?: string;
 };
 
-export async function renderLinks(page: PDFPageProxy, viewport: Viewport, pdf: PDFDocumentProxy, navigate: (page: number) => void) {
+export async function renderLinks(page: PDFPageProxy, viewport: Viewport, navigate: (destination: PdfDestination) => Promise<void>) {
   const layer = document.createElement('div');
   layer.className = 'linkLayer';
   const annotations = await page.getAnnotations({ intent: 'display' }) as LinkAnnotation[];
@@ -73,12 +75,7 @@ export async function renderLinks(page: PDFPageProxy, viewport: Viewport, pdf: P
       link.href = '#';
       link.onclick = async event => {
         event.preventDefault();
-        try {
-          const resolved = typeof destination === 'string' ? await pdf.getDestination(destination) : destination;
-          if (!resolved) return;
-          const index = typeof resolved[0] === 'number' ? resolved[0] : await pdf.getPageIndex(resolved[0]);
-          navigate(index + 1);
-        } catch { }
+        try { await navigate(destination); } catch { }
       };
     } else {
       const url = annotation.url;

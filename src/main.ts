@@ -5,7 +5,7 @@ import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 import './style.css';
 import { pickDocumentPaths, readDocument, onOpenPath, onMenuAction, newWindow, closeWindow, windowReady, getSessions, saveSession, archiveSession, type OpenedDocument, type SavedTab, type SavedWindow } from './desktop';
 import { mountApp } from './app-shell';
-import { releaseCanvases, renderLinks, renderRaster, renderText } from './pdf-rendering';
+import { releaseCanvases, renderLinks, renderRaster, renderText, type PdfDestination } from './pdf-rendering';
 import { mountZoom, type ZoomPoint } from './zoom';
 import { mountSidebarTabs, mountThemeSwitch } from './controls';
 import { mountDocumentTabs } from './document-tabs';
@@ -19,6 +19,8 @@ pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
 type PdfDocument = pdfjs.PDFDocumentProxy;
 type Dimensions = { width: number; height: number };
+type PdfPosition = { x?: number; y?: number };
+const activePageOffset = 0.32;
 
 function escapeHtml(text: string) { return text.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!); }
 const { systemTheme, savedInvertImages } = mountApp(document.querySelector<HTMLDivElement>('#app')!);
@@ -170,7 +172,7 @@ function activateDocumentTab(id: string) {
   selectedHitIndex = tab.selected; selectedHit = hits[selectedHitIndex] || null;
   $<HTMLInputElement>('#search-input').value = tab.query;
   showTab(tab.sidebarTab, false);
-  void renderOutline($('#outline'), pdf, page => goToPage(page));
+  void renderOutline($('#outline'), pdf, goToDestination);
   $('#welcome').hidden = !!pdf; pages.hidden = !pdf; $('#navigation').hidden = !pdf;
   if (!pdf) { renderRecentWindows(); refreshRecentWindows(); }
   $<HTMLButtonElement>('#sidebar-toggle').disabled = !pdf;
@@ -272,26 +274,56 @@ function updatePageUi(revealThumbnail = false) {
     else if (item.bottom > list.bottom) thumbs.scrollTop += item.bottom - list.bottom + 8;
   }
 }
-async function goToPage(number: number) {
+async function goToDestination(sourcePdf: PdfDocument, destination: PdfDestination) {
+  if (pdf !== sourcePdf) return;
+  commitZoomPreview();
+  const epoch = ++navigationEpoch;
+  const resolved: unknown[] | null = typeof destination === 'string' ? await sourcePdf.getDestination(destination) : destination;
+  if (!resolved || pdf !== sourcePdf || epoch !== navigationEpoch) return;
+  const reference = resolved[0] as number | Parameters<PdfDocument['getPageIndex']>[0];
+  const index = typeof reference === 'number' ? reference : await sourcePdf.getPageIndex(reference);
+  if (pdf !== sourcePdf || epoch !== navigationEpoch) return;
+
+  const mode = resolved[1] as { name: string } | undefined;
+  let left: unknown, top: unknown;
+  switch (mode?.name) {
+    case 'XYZ': left = resolved[2]; top = resolved[3]; break;
+    case 'FitH': case 'FitBH': top = resolved[2]; break;
+    case 'FitV': case 'FitBV': left = resolved[2]; break;
+    case 'FitR': left = resolved[2]; top = resolved[5]; break;
+  }
+  const x = typeof left === 'number' && Number.isFinite(left) ? left : undefined;
+  const y = typeof top === 'number' && Number.isFinite(top) ? top : undefined;
+  await goToPage(index + 1, x !== undefined || y !== undefined ? { x, y } : undefined);
+}
+
+async function goToPage(number: number, position?: PdfPosition) {
   if (!pdf) return;
   commitZoomPreview();
   const sourcePdf = pdf;
   const target = Math.max(1, Math.min(pdf.numPages, Math.round(number) || 1));
   const epoch = ++navigationEpoch;
-  if (!dimensions[target - 1]) {
+  let destinationPoint: number[] | undefined;
+  if (position || !dimensions[target - 1]) {
     try {
       const page = await sourcePdf.getPage(target);
       if (pdf !== sourcePdf || epoch !== navigationEpoch) return;
-      const viewport = page.getViewport({ scale: 1 });
-      dimensions[target - 1] = { width: viewport.width, height: viewport.height };
-      const shell = pages.querySelector<HTMLElement>(`.page-shell[data-page="${target}"]`);
-      const d = pageDimensions(target - 1);
-      if (shell) {
-        shell.style.width = `${d.width * zoom}px`;
-        shell.style.height = `${d.height * zoom}px`;
+      if (!dimensions[target - 1]) {
+        const viewport = page.getViewport({ scale: 1 });
+        dimensions[target - 1] = { width: viewport.width, height: viewport.height };
+        const shell = pages.querySelector<HTMLElement>(`.page-shell[data-page="${target}"]`);
+        const d = pageDimensions(target - 1);
+        if (shell) {
+          shell.style.width = `${d.width * zoom}px`;
+          shell.style.height = `${d.height * zoom}px`;
+        }
+        const button = thumbs.querySelector<HTMLElement>(`.thumbnail[data-page="${target}"]`);
+        if (button) setThumbnailSize(button, d);
       }
-      const button = thumbs.querySelector<HTMLElement>(`.thumbnail[data-page="${target}"]`);
-      if (button) setThumbnailSize(button, d);
+      if (position) {
+        const viewport = page.getViewport({ scale: zoom, rotation: (page.rotate + rotation) % 360 });
+        destinationPoint = viewport.convertToViewportPoint(position.x ?? page.view[0], position.y ?? page.view[3]);
+      }
     } catch (error) { console.error('Unable to read page dimensions:', error); }
   }
   if (pdf !== sourcePdf || epoch !== navigationEpoch) return;
@@ -300,8 +332,17 @@ async function goToPage(number: number) {
   queueSessionSave();
   const shell = pages.querySelector<HTMLElement>(`.page-shell[data-page="${currentPage}"]`);
   if (shell) {
-    const offset = shell.getBoundingClientRect().top - viewer.getBoundingClientRect().top;
-    viewer.scrollTo({ top: viewer.scrollTop + offset - 24, behavior: 'auto' });
+    const pageRect = shell.getBoundingClientRect();
+    const viewRect = viewer.getBoundingClientRect();
+    let top = viewer.scrollTop + pageRect.top - viewRect.top - 24;
+    let left = viewer.scrollLeft;
+    if (destinationPoint) {
+      const [x, y] = destinationPoint;
+      // Keep the destination page active when the heading is close to its bottom edge.
+      top += Math.max(0, Math.min(y, pageRect.height - viewer.clientHeight * activePageOffset));
+      if (pageRect.width > viewer.clientWidth) left += pageRect.left - viewRect.left + Math.max(0, x) - 24;
+    }
+    viewer.scrollTo({ top, left, behavior: 'auto' });
   }
 }
 function pageDimensions(index: number): Dimensions {
@@ -396,9 +437,10 @@ function renderPage(shell: HTMLElement, epoch: number): Promise<void> {
 }
 async function renderPageContent(shell: HTMLElement, epoch: number) {
   if (!pdf || (shell.dataset.rendered === 'true' && Math.abs(Number(shell.dataset.renderedZoom) - zoom) < 0.0001)) return;
+  const sourcePdf = pdf;
   const number = Number(shell.dataset.page);
   try {
-    const page = await pdf.getPage(number);
+    const page = await sourcePdf.getPage(number);
     if (epoch !== renderEpoch) return;
     const natural = page.getViewport({ scale: 1 });
     if (!dimensions[number - 1] || dimensions[number - 1].width !== natural.width || dimensions[number - 1].height !== natural.height) {
@@ -434,7 +476,7 @@ async function renderPageContent(shell: HTMLElement, epoch: number) {
       highlightVisibleText(shell);
     }).catch(error => console.error('Unable to extract page text:', error));
     textLayerReady.set(content, trackRender(textReady));
-    void trackRender(renderLinks(page, viewport, pdf, pageNumber => { void goToPage(pageNumber); }).then(links => {
+    void trackRender(renderLinks(page, viewport, destination => goToDestination(sourcePdf, destination)).then(links => {
       if (content.isConnected) content.append(links);
     }).catch(error => console.error('Unable to load page links:', error)));
   } catch (error) {
@@ -500,7 +542,7 @@ function scrollToSelectedMatch(shell: HTMLElement) {
   const mark = shell.querySelector<HTMLElement>(`mark[data-occurrence="${selectedHit.occurrence}"]`);
   if (!mark) return false;
   const offset = mark.getBoundingClientRect().top - viewer.getBoundingClientRect().top;
-  viewer.scrollTo({ top: viewer.scrollTop + offset - viewer.clientHeight * 0.32, behavior: 'auto' });
+  viewer.scrollTo({ top: viewer.scrollTop + offset - viewer.clientHeight * activePageOffset, behavior: 'auto' });
   return true;
 }
 function updateSearchStatus() {
@@ -827,7 +869,7 @@ viewer.addEventListener('scroll', () => {
   scrollFrame = requestAnimationFrame(() => {
   scrollFrame = 0;
   if (!pdf) return;
-  const center = viewer.getBoundingClientRect().top + viewer.clientHeight * 0.32;
+  const center = viewer.getBoundingClientRect().top + viewer.clientHeight * activePageOffset;
   let low = 0, high = pages.children.length - 1;
   let nearest = currentPage;
   while (low <= high) {

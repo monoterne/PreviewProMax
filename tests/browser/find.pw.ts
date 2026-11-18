@@ -789,6 +789,7 @@ test('contents supports nested entries, named destinations, and keyboard toggles
   await page.getByRole('button', { name: 'Expand Chapter one' }).press('Enter');
   await page.getByRole('button', { name: 'Section two', exact: true }).click();
   await expect(page.locator('#page-number')).toHaveValue('12');
+  await expect(page.getByText('Destination heading', { exact: true })).toBeInViewport();
 });
 
 test('links printed in the PDF navigate to internal destinations', async ({ page }) => {
@@ -797,6 +798,7 @@ test('links printed in the PDF navigate to internal destinations', async ({ page
   await expect(page.locator('.page-shell[data-page="1"] .page-link[target="_blank"]')).toHaveAttribute('href', 'https://example.org/');
   await page.locator('.page-shell[data-page="1"] .page-link[href="#"]').click();
   await expect(page.locator('#page-number')).toHaveValue('12');
+  await expect(page.getByText('Destination heading', { exact: true })).toBeInViewport();
 });
 
 
