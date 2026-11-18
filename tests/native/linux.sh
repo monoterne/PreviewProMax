@@ -29,3 +29,19 @@ timeout 60 xdotool search --sync --onlyvisible --name 'Preview Pro Max$'
 wait_for_tabs "$(jq -cn --args '$ARGS.positional' "$work/first file.pdf" "$work/second.pdf")"
 (cd "$work/other" && timeout 30 preview-pro-max 'forwarded file.pdf')
 wait_for_tabs "$(jq -cn --args '$ARGS.positional' "$work/first file.pdf" "$work/second.pdf" "$work/other/forwarded file.pdf")"
+
+# Find text on the last page in the real WebKitGTK view, then verify navigation.
+window=$(xdotool search --onlyvisible --name 'Preview Pro Max$' | head -n 1)
+xdotool windowfocus --sync "$window"
+xdotool key ctrl+f
+xdotool type --clearmodifiers 'Page 24'
+for ((i=0; i<60; i++)); do
+  xdotool key Return
+  sleep 0.5
+  if jq -e '.windows[0] | .tabs[.active].page == 24' "$session" >/dev/null; then
+    exit 0
+  fi
+done
+echo 'Find did not navigate to page 24 in the installed viewer' >&2
+cat "$session" >&2
+exit 1
