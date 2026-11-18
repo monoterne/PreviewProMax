@@ -823,5 +823,8 @@ test('text extraction errors are reported instead of claiming there are no match
   await page.getByRole('tab', { name: 'Find', exact: true }).click();
   await page.locator('#search-input').fill('target');
   await expect(page.locator('#search-status')).toHaveText('Unable to search this document.');
+  await page.getByRole('button', { name: 'New tab', exact: true }).click();
+  await page.getByRole('tab', { name: 'find-fixture.pdf' }).click();
+  await expect(page.locator('#search-status')).toHaveText('Unable to search this document.');
   await expect(page.locator('.search-result')).toHaveCount(0);
 });
