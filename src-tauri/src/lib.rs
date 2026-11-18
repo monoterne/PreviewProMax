@@ -221,15 +221,18 @@ fn document_window_label(app: &tauri::AppHandle) -> Option<String> {
         .or_else(|| create_window(app.clone(), None).ok())
 }
 
-fn queue_document(app: &tauri::AppHandle, path: String) {
-    if !is_file(&path) {
+fn queue_document(app: &tauri::AppHandle, path: PathBuf) {
+    if !path.is_file() {
         return;
     }
     let Some(label) = document_window_label(app) else {
         return;
     };
     if let Ok(mut pending) = app.state::<PendingDocuments>().0.lock() {
-        pending.entry(label.clone()).or_default().push_back(path);
+        pending
+            .entry(label.clone())
+            .or_default()
+            .push_back(path.to_string_lossy().into_owned());
     }
     if let Some(window) = app.get_webview_window(&label) {
         let _ = app.emit_to(label.as_str(), "open-document-path", ());
@@ -338,11 +341,12 @@ fn desktop_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri
 pub fn run() {
     tauri::Builder::default()
         .manage(PendingDocuments::default())
-        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+        .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
             let paths: Vec<_> = args
                 .into_iter()
                 .skip(1)
-                .filter(|value| is_file(value))
+                .map(|value| Path::new(&cwd).join(value))
+                .filter(|path| path.is_file())
                 .collect();
             if paths.is_empty() {
                 let _ = create_window(app.clone(), None);
@@ -387,8 +391,10 @@ pub fn run() {
             }
             #[cfg(target_os = "macos")]
             app.set_menu(desktop_menu(app.handle())?)?;
-            for path in std::env::args().skip(1).filter(|value| is_file(value)) {
-                queue_document(app.handle(), path);
+            for arg in std::env::args_os().skip(1) {
+                if let Ok(path) = std::path::absolute(arg) {
+                    queue_document(app.handle(), path);
+                }
             }
             Ok(())
         })
@@ -439,7 +445,7 @@ pub fn run() {
             if let tauri::RunEvent::Opened { urls } = event {
                 for url in urls {
                     if let Ok(path) = url.to_file_path() {
-                        queue_document(app, path.to_string_lossy().into_owned());
+                        queue_document(app, path);
                     }
                 }
             }

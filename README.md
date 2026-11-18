@@ -1,6 +1,6 @@
 # Preview Pro Max
 
-A desktop PDF viewer for macOS and Windows. The interface uses Bun, TypeScript, CSS, and Mozilla PDF.js; Tauri supplies the native window and file picker. The finished app uses the operating system webview and includes no Node or Bun runtime.
+A desktop PDF viewer for Linux, macOS and Windows. The interface uses Bun, TypeScript, CSS, and Mozilla PDF.js; Tauri supplies the native window and file picker. The finished app uses the operating system webview and includes no Node or Bun runtime.
 
 ## Features
 
@@ -28,11 +28,14 @@ bun run dev
 
 ```sh
 bun run typecheck
+bun run dist:linux # on Linux: Debian package
 bun run dist:mac # on macOS: .app
 bun run dist:win # on Windows: NSIS installer and portable .exe
 ```
 
-The native outputs are in `src-tauri/target/release/bundle/`. On Windows, `src-tauri/target/release/preview-pro-max.exe` is the portable executable and requires the system WebView2 runtime. The NSIS installer can download WebView2 if it is missing. The GitHub Actions workflow uploads a zipped macOS `.app`, the portable Windows `.exe`, and the Windows installer.
+The native outputs are in `src-tauri/target/release/bundle/`. On Windows, `src-tauri/target/release/preview-pro-max.exe` is the portable executable and requires the system WebView2 runtime. The NSIS installer can download WebView2 if it is missing. The GitHub Actions desktop workflow publishes downloads for each platform.
+
+On x86-64 Ubuntu 24.04, download the `preview-pro-max-linux` artifact, unzip it and install the `.deb` with `sudo apt install ./<filename>.deb`. APT installs the system WebKitGTK 4.1 runtime. Open Preview Pro Max from the applications menu, use **Open With** on PDFs, or pass one or more file paths to `preview-pro-max`.
 
 macOS builds use an ad-hoc signature. Public distribution without installation prompts requires an Apple Developer ID and notarization.
 
@@ -46,7 +49,7 @@ On launch, previously open windows reopen with their PDF tabs, selected tab, pag
 
 Pinch on a trackpad or use Ctrl/Cmd plus the mouse wheel over a page to zoom around the pointer. Ordinary wheel scrolling moves through the PDF.
 
-| Action | macOS | Windows |
+| Action | macOS | Windows and Linux |
 | --- | --- | --- |
 | Open files | ⌘O | Ctrl+O |
 | New tab | ⌘T | Ctrl+T |
