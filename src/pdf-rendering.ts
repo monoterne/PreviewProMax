@@ -49,7 +49,6 @@ type LinkAnnotation = {
   rect?: number[];
   dest?: string | unknown[];
   url?: string;
-  unsafeUrl?: string;
   title?: string;
 };
 
@@ -82,7 +81,7 @@ export async function renderLinks(page: PDFPageProxy, viewport: Viewport, pdf: P
         } catch { }
       };
     } else {
-      const url = annotation.url || annotation.unsafeUrl;
+      const url = annotation.url;
       if (!url) continue;
       link.href = url;
       link.target = '_blank';
