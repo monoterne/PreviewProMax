@@ -12,7 +12,9 @@ export function fixture() {
   const pages = objects.push(`<< /Type /Pages /Kids [${kids.map(n => `${n} 0 R`).join(' ')}] /Count ${kids.length} >>`) - 1;
   for (const kid of kids) objects[kid] = objects[kid].replace('/Parent 0 0 R', `/Parent ${pages} 0 R`);
   const link = objects.push(`<< /Type /Annot /Subtype /Link /Rect [32 650 150 680] /Border [0 0 0] /Dest [${kids[11]} 0 R /Fit] >>`) - 1;
-  objects[kids[0]] = objects[kids[0]].replace(' /Contents', ` /Annots [${link} 0 R] /Contents`);
+  const webLink = objects.push('<< /Type /Annot /Subtype /Link /Rect [32 580 150 600] /A << /S /URI /URI (https://example.org/) >> >>') - 1;
+  const unresolvedLink = objects.push('<< /Type /Annot /Subtype /Link /Rect [32 550 150 570] /A << /S /URI /URI (relative/path) >> >>') - 1;
+  objects[kids[0]] = objects[kids[0]].replace(' /Contents', ` /Annots [${link} 0 R ${webLink} 0 R ${unresolvedLink} 0 R] /Contents`);
   const outlineRoot = objects.length;
   objects.push(`<< /Type /Outlines /First ${outlineRoot + 1} 0 R /Last ${outlineRoot + 1} 0 R /Count 2 >>`);
   objects.push(`<< /Title (Chapter one) /Parent ${outlineRoot} 0 R /Dest [${kids[4]} 0 R /Fit] /First ${outlineRoot + 2} 0 R /Last ${outlineRoot + 2} 0 R /Count 1 >>`);

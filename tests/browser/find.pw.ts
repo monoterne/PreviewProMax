@@ -792,7 +792,10 @@ test('contents supports nested entries, named destinations, and keyboard toggles
 });
 
 test('links printed in the PDF navigate to internal destinations', async ({ page }) => {
-  await page.locator('.page-shell[data-page="1"] .page-link').click();
+  const links = page.locator('.page-shell[data-page="1"] .page-link');
+  await expect(links).toHaveCount(2);
+  await expect(page.locator('.page-shell[data-page="1"] .page-link[target="_blank"]')).toHaveAttribute('href', 'https://example.org/');
+  await page.locator('.page-shell[data-page="1"] .page-link[href="#"]').click();
   await expect(page.locator('#page-number')).toHaveValue('12');
 });
 
