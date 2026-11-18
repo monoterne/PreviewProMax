@@ -2,10 +2,6 @@ import { mkdir, readdir, readFile, writeFile, copyFile, rm } from "node:fs/promi
 import { resolve } from "node:path";
 
 if (process.platform !== "darwin") process.exit(0);
-if (process.env.PREVIEW_PRO_MAX_ADAPTIVE_ICON === "false") {
-  console.log("Skipping adaptive icon catalog for the legacy macOS build.");
-  process.exit(0);
-}
 const root = resolve(import.meta.dirname, "..");
 const icons = resolve(root, "src-tauri/icons");
 const source = resolve(icons, "PreviewProMax.icon");

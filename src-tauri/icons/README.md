@@ -27,6 +27,6 @@ bun run icons:mac
 
 The build compiles the source whenever full Xcode is available. It runs `actool`
 with an open stdin to avoid Tauri's compiler-launch crash (tauri-apps/tauri#15315).
-macOS CI always recompiles and saves `Assets.car` and `catalog.json` in a separate
-`preview-pro-max-icon-catalog` artifact to refresh the checked-in cache. CI also
-requires both `Assets.car` and the legacy `.icns` in the app bundle.
+The adaptive macOS job checks both icons in the bundle and saves `Assets.car`
+and `catalog.json` in the `preview-pro-max-icon-catalog-adaptive` artifact.
+The legacy job builds and checks the flattened `.icns` icon.
