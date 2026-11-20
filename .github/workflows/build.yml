@@ -61,6 +61,13 @@ jobs:
         if: runner.os == 'macOS'
         run: bun run test:native
       - run: bun tauri build ${{ matrix.config_args }} --bundles ${{ matrix.bundles }}
+      - name: Upload Fedora package
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v7
+        with:
+          name: preview-pro-max-linux-fedora
+          path: src-tauri/target/release/bundle/rpm/*.rpm
+          if-no-files-found: error
       - name: Check macOS bundle icon
         if: runner.os == 'macOS'
         shell: bash
@@ -109,13 +116,6 @@ jobs:
               # Docker restricts the namespaces used by the WebKit sandbox.
               WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 dbus-run-session -- xvfb-run -a bash /smoke-test.sh /fixture.pdf
             '
-      - name: Upload Fedora package
-        if: runner.os == 'Linux'
-        uses: actions/upload-artifact@v7
-        with:
-          name: preview-pro-max-linux-fedora
-          path: src-tauri/target/release/bundle/rpm/*.rpm
-          if-no-files-found: error
       - name: Save compiled icon catalog
         if: matrix.target == 'mac-adaptive'
         uses: actions/upload-artifact@v7
