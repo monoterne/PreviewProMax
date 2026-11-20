@@ -81,7 +81,11 @@ impl SessionManager {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
         let bytes = serde_json::to_vec(stored).map_err(|e| e.to_string())?;
-        std::fs::write(&self.path, bytes).map_err(|e| e.to_string())
+        // Session writes hold the manager lock. Replace the last complete snapshot
+        // only after the new one has been written on the same filesystem.
+        let pending = self.path.with_extension("json.tmp");
+        std::fs::write(&pending, bytes).map_err(|e| e.to_string())?;
+        std::fs::rename(pending, &self.path).map_err(|e| e.to_string())
     }
 
     fn close(&self, label: &str) {

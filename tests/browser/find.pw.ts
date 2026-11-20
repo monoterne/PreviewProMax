@@ -701,6 +701,32 @@ test('a page selection cancels pending match navigation without jumping back', a
   expect(await page.locator('#viewer').evaluate(el => el.scrollTop)).toBeLessThan(40);
 });
 
+test('a distant Find result keeps its page until the text layer is ready', async ({ page }) => {
+  await page.locator('#search-toggle').click();
+  await page.locator('#search-input').fill('target');
+  await expect(page.locator('.search-result')).toHaveCount(72);
+  await page.evaluate(() => {
+    const postMessage = Worker.prototype.postMessage;
+    Worker.prototype.postMessage = function (message, ...options) {
+      if (message?.action === 'GetTextContent' && message.data.pageIndex === 20) {
+        Worker.prototype.postMessage = postMessage;
+        Object.assign(window, { resumeText: () => Reflect.apply(postMessage, this, [message, ...options]) });
+        return;
+      }
+      Reflect.apply(postMessage, this, [message, ...options]);
+    };
+  });
+  await page.locator('.search-result').nth(61).click();
+  await page.waitForFunction(() => 'resumeText' in window);
+  // Keep extraction pending across the offscreen canvas cleanup interval.
+  await page.waitForTimeout(400);
+  const target = page.locator('.page-shell[data-page="21"]');
+  await expect(target.locator('canvas')).toHaveCount(1);
+  await page.evaluate(() => (window as any).resumeText());
+  await expect(target.locator('.search-match.selected')).toHaveText('target');
+  await expect(page.locator('#page-number')).toHaveValue('21');
+});
+
 test('find highlights remain inside the PDF after rotation and zoom', async ({ page }) => {
   await useViewOption(page, '#rotate');
   await page.locator('#zoom-in').click();
@@ -722,6 +748,16 @@ test('find highlights remain inside the PDF after rotation and zoom', async ({ p
 });
 
 test('scrolling through a long document keeps retained page canvases bounded', async ({ page }) => {
+  const peak = await page.locator('#viewer').evaluate(async viewer => {
+    let peakCanvases = 0;
+    while (viewer.scrollTop + viewer.clientHeight < viewer.scrollHeight - 1) {
+      viewer.scrollTop += 120;
+      await new Promise(requestAnimationFrame);
+      peakCanvases = Math.max(peakCanvases, viewer.querySelectorAll('.page-shell canvas').length);
+    }
+    return peakCanvases;
+  });
+  expect(peak).toBeLessThan(10);
   for (const number of [5, 10, 15, 20, 24, 1]) {
     await page.locator('#page-number').fill(String(number));
     await page.locator('#page-number').press('Enter');

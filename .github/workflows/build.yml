@@ -78,10 +78,33 @@ jobs:
             test -s "$app/Contents/Resources/Assets.car"
             test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$app/Contents/Info.plist")" = PreviewProMax
           fi
-      - name: Prepare Linux smoke test fixture
-        if: runner.os == 'Linux'
+      - name: Prepare desktop smoke test fixture
+        if: runner.os != 'macOS'
+        shell: bash
         run: |
           bun -e 'import { fixture } from "./tests/fixtures/pdf"; await Bun.write(process.argv[1], new Uint8Array(fixture()))' "$RUNNER_TEMP/preview-fixture.pdf"
+      - name: Open a PDF in the portable Windows app
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $fixture = Join-Path $env:RUNNER_TEMP 'preview-fixture.pdf'
+          $session = Join-Path $env:APPDATA 'com.previewpromax.viewer/sessions.json'
+          $app = Start-Process './src-tauri/target/release/preview-pro-max.exe' -ArgumentList ('"{0}"' -f $fixture) -PassThru
+          try {
+            $deadline = [DateTime]::UtcNow.AddSeconds(60)
+            do {
+              $app.Refresh()
+              if ($app.HasExited) { throw "Viewer exited with code $($app.ExitCode)" }
+              if ($app.MainWindowHandle -ne [IntPtr]::Zero -and (Test-Path $session)) {
+                $saved = Get-Content -Raw $session | ConvertFrom-Json
+                if ($saved.windows.tabs.path -contains $fixture) { return }
+              }
+              Start-Sleep -Milliseconds 250
+            } while ([DateTime]::UtcNow -lt $deadline)
+            throw "Timed out opening $fixture in the portable viewer"
+          } finally {
+            if (!$app.HasExited) { Stop-Process -Id $app.Id -Force }
+          }
       - name: Test installed Ubuntu package
         if: runner.os == 'Linux'
         run: |
