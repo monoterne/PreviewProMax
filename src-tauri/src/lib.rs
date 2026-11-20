@@ -188,6 +188,11 @@ async fn new_window(app: tauri::AppHandle) -> Result<String, String> {
 
 #[tauri::command]
 fn window_ready(window: WebviewWindow, dark: bool) -> Result<(), String> {
+    // Leave room for macOS half-screen tiles on smaller displays.
+    #[cfg(target_os = "macos")]
+    window
+        .set_min_size(Some(tauri::LogicalSize::new(480.0, 320.0)))
+        .map_err(|e| e.to_string())?;
     let color = if dark {
         tauri::window::Color(31, 32, 35, 255)
     } else {
@@ -264,7 +269,7 @@ async fn read_document(path: String) -> Result<Response, String> {
 
 #[cfg(target_os = "macos")]
 fn desktop_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
-    use tauri::menu::{Menu, MenuItem, PredefinedMenuItem as Native, Submenu};
+    use tauri::menu::{Menu, MenuItem, PredefinedMenuItem as Native, Submenu, WINDOW_SUBMENU_ID};
     Menu::with_items(
         app,
         &[
@@ -324,8 +329,9 @@ fn desktop_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri
                     &MenuItem::with_id(app, "find", "Find…", true, Some("CmdOrCtrl+F"))?,
                 ],
             )?,
-            &Submenu::with_items(
+            &Submenu::with_id_and_items(
                 app,
+                WINDOW_SUBMENU_ID,
                 "Window",
                 true,
                 &[

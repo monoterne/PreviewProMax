@@ -423,44 +423,51 @@ test('wheel zoom followed by scrolling does not jump back when its timer ends', 
   expect(await page.locator('#viewer').evaluate(el => el.scrollTop)).toBeCloseTo(scrolling.top, 0);
 });
 
-test('compact toolbar keeps every control inside the window in both themes', async ({ page }) => {
-  await page.setViewportSize({ width: 760, height: 640 });
-  const name = 'Research notes with a very long document title and appendix.pdf';
-  await page.evaluate(path => {
-    localStorage.setItem('__skipPending', 'true');
-    localStorage.setItem('__testSessions', JSON.stringify({ restore: {
-      id: 'compact-window', active: 0, tabs: [{ path, page: 1, zoom: 1, rotation: 0, fit: true, top: 0, left: 0 }],
-    }, recent: [] }));
-  }, name);
-  await page.reload();
-  await expect(page.locator('.page-shell').first()).toHaveAttribute('data-rendered', 'true');
-  await page.getByRole('tab', { name, exact: true }).focus();
-  for (const theme of ['light', 'dark']) {
-    if (theme === 'dark') await useViewOption(page, '#dark-mode-switch');
-    const geometry = await page.evaluate(() => {
-      const header = document.querySelector('.toolbar')!.getBoundingClientRect();
-      const tabs = document.querySelector('.document-bar')!.getBoundingClientRect();
-      const nav = document.querySelector('#navigation')!.getBoundingClientRect();
-      const buttons = [...document.querySelectorAll<HTMLElement>('.toolbar button')]
-        .filter(button => button.getClientRects().length).map(button => {
-          const rect = button.getBoundingClientRect();
-          return { name: button.getAttribute('aria-label'), left: rect.left, right: rect.right, bottom: rect.bottom };
-        });
-      const left = document.querySelector('.toolbar-left')!.getBoundingClientRect();
-      const right = document.querySelector('.toolbar-right')!.getBoundingClientRect();
-      return { buttons, headerBottom: header.bottom, tabsTop: tabs.top, navBottom: nav.bottom, leftEnd: left.right, navStart: nav.left, navEnd: nav.right, rightStart: right.left };
-    });
-    for (const control of geometry.buttons) {
-      expect(control.left, control.name!).toBeGreaterThanOrEqual(0);
-      expect(control.right, control.name!).toBeLessThanOrEqual(760);
-      expect(control.bottom, control.name!).toBeLessThanOrEqual(geometry.headerBottom);
+for (const [width, height] of [[760, 640], [480, 320]]) {
+  test(`compact toolbar fits a ${width} × ${height} window in both themes`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'light' });
+    await page.setViewportSize({ width, height });
+    const name = 'Research notes with a very long document title and appendix.pdf';
+    await page.evaluate(path => {
+      localStorage.setItem('__skipPending', 'true');
+      localStorage.setItem('__testSessions', JSON.stringify({ restore: {
+        id: 'compact-window', active: 0, tabs: [{ path, page: 1, zoom: 1, rotation: 0, fit: true, top: 0, left: 0 }],
+      }, recent: [] }));
+    }, name);
+    await page.reload();
+    await expect(page.locator('.page-shell').first()).toHaveAttribute('data-rendered', 'true');
+    await page.getByRole('tab', { name, exact: true }).focus();
+    for (const theme of ['light', 'dark']) {
+      if (theme === 'dark') await useViewOption(page, '#dark-mode-switch');
+      const geometry = await page.evaluate(() => {
+        const header = document.querySelector('.toolbar')!.getBoundingClientRect();
+        const tabs = document.querySelector('.document-bar')!.getBoundingClientRect();
+        const nav = document.querySelector('#navigation')!.getBoundingClientRect();
+        const buttons = [...document.querySelectorAll<HTMLElement>('.toolbar button')]
+          .filter(button => button.getClientRects().length).map(button => {
+            const rect = button.getBoundingClientRect();
+            return { name: button.getAttribute('aria-label'), left: rect.left, right: rect.right, bottom: rect.bottom };
+          });
+        const left = document.querySelector('.toolbar-left')!.getBoundingClientRect();
+        const right = document.querySelector('.toolbar-right')!.getBoundingClientRect();
+        const navFits = nav.top >= Math.max(left.bottom, right.bottom) ||
+          (left.right <= nav.left && nav.right <= right.left);
+        return { buttons, headerBottom: header.bottom, tabsTop: tabs.top, navBottom: nav.bottom, navFits, sidesFit: left.right <= right.left };
+      });
+      for (const control of geometry.buttons) {
+        expect(control.left, control.name!).toBeGreaterThanOrEqual(0);
+        expect(control.right, control.name!).toBeLessThanOrEqual(width);
+        expect(control.bottom, control.name!).toBeLessThanOrEqual(geometry.headerBottom);
+      }
+      expect(geometry.tabsTop).toBeGreaterThanOrEqual(geometry.navBottom);
+      expect(geometry.navFits).toBe(true);
+      expect(geometry.sidesFit).toBe(true);
+      await page.screenshot({ path: `test-results/compact-${width}-${theme}.png` });
     }
-    expect(geometry.tabsTop).toBeGreaterThanOrEqual(geometry.navBottom);
-    expect(geometry.leftEnd).toBeLessThanOrEqual(geometry.navStart);
-    expect(geometry.navEnd).toBeLessThanOrEqual(geometry.rightStart);
-    await page.screenshot({ path: `test-results/compact-${theme}.png` });
-  }
-});
+    await page.getByRole('button', { name: 'Next page', exact: true }).click();
+    await expect(page.locator('#page-number')).toHaveValue('2');
+  });
+}
 
 test('view options support keyboard dismissal and keep navigation clear', async ({ page }) => {
   const toggle = page.getByRole('button', { name: 'View options', exact: true });
