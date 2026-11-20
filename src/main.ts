@@ -21,6 +21,7 @@ type PdfDocument = pdfjs.PDFDocumentProxy;
 type Dimensions = { width: number; height: number };
 type PdfPosition = { x?: number; y?: number };
 const activePageOffset = 0.32;
+const pagePreloadMargin = 700;
 
 function escapeHtml(text: string) { return text.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!); }
 const { systemTheme, savedInvertImages } = mountApp(document.querySelector<HTMLDivElement>('#app')!);
@@ -46,6 +47,7 @@ let dimensions: Dimensions[] = [];
 let renderEpoch = 0;
 let thumbnailEpoch = 0;
 let navigationEpoch = 0;
+let pendingMatchEpoch: number | undefined;
 let searchEpoch = 0;
 let searchAbort: AbortController | undefined;
 let hits: SearchHit[] = [];
@@ -61,6 +63,7 @@ let toastTimer: number | undefined;
 let pageObserver: IntersectionObserver | null = null;
 let thumbObserver: IntersectionObserver | null = null;
 const pageRenders = new WeakMap<HTMLElement, { epoch: number; task: Promise<void> }>();
+const renderedPages = new Set<HTMLElement>();
 const renderedText = new WeakMap<HTMLElement, { divs: HTMLElement[]; strings: string[] }>();
 const textLayerReady = new WeakMap<Element, Promise<void>>();
 const annotationTools = mountAnnotations({
@@ -164,6 +167,7 @@ function activateDocumentTab(id: string) {
   pageObserver?.disconnect(); thumbObserver?.disconnect();
   releaseCanvases(pages); releaseCanvases(thumbs);
   pages.replaceChildren(); thumbs.replaceChildren();
+  renderedPages.clear();
   activeDocumentId = id;
   pdf = tab.pdf; documentName = tab.name; currentPage = tab.page;
   annotationTools.activate(tab.annotationKey);
@@ -397,7 +401,7 @@ function observePages() {
   const epoch = renderEpoch;
   pageObserver = new IntersectionObserver(entries => {
     for (const entry of entries) if (entry.isIntersecting) void renderPage(entry.target as HTMLElement, epoch);
-  }, { root: viewer, rootMargin: '700px 0px' });
+  }, { root: viewer, rootMargin: `${pagePreloadMargin}px 0px` });
   pages.querySelectorAll('.page-shell').forEach(el => pageObserver!.observe(el));
 }
 function rebuildPages() {
@@ -407,6 +411,7 @@ function rebuildPages() {
   pageObserver?.disconnect();
   releaseCanvases(pages);
   pages.innerHTML = '';
+  renderedPages.clear();
   for (let i = 0; i < pdf.numPages; i++) {
     const shell = document.createElement('section');
     shell.className = 'page-shell';
@@ -464,6 +469,8 @@ async function renderPageContent(shell: HTMLElement, epoch: number) {
     shell.prepend(content);
     shell.dataset.rendered = 'true';
     shell.dataset.renderedZoom = String(zoom);
+    renderedPages.add(shell);
+    schedulePageTrim();
     renderedText.delete(shell);
     annotationTools.paintDrawings(shell);
     // Text and links belong to this raster, even if a zoom or tab switch replaces it.
@@ -482,15 +489,27 @@ async function renderPageContent(shell: HTMLElement, epoch: number) {
     console.error(error);
   }
 }
+let trimTimer: number | undefined;
+function schedulePageTrim() {
+  if (trimTimer !== undefined) return;
+  trimTimer = window.setTimeout(() => {
+    trimTimer = undefined;
+    trimRenderedPages();
+  }, 180);
+}
 function trimRenderedPages() {
   const view = viewer.getBoundingClientRect();
-  const margin = viewer.clientHeight * 1.5;
-  pages.querySelectorAll<HTMLElement>('.page-shell[data-rendered="true"]').forEach(shell => {
+  // Keep pages inside the observer's preload margin even in short windows.
+  const margin = Math.max(pagePreloadMargin, viewer.clientHeight * 1.5);
+  renderedPages.forEach(shell => {
+    // Find renders its destination offscreen before scrolling to the matching glyphs.
+    if (pendingMatchEpoch === navigationEpoch && Number(shell.dataset.page) === selectedHit?.page) return;
     const rect = shell.getBoundingClientRect();
     if (rect.bottom < view.top - margin || rect.top > view.bottom + margin) {
       const content = shell.querySelector('.page-content');
       if (content) { content.remove(); releaseCanvases(content); }
       renderedText.delete(shell);
+      renderedPages.delete(shell);
       shell.dataset.rendered = 'false';
       delete shell.dataset.renderedZoom;
       if (!shell.querySelector('.page-loading')) {
@@ -535,14 +554,6 @@ function highlightVisibleText(shell: HTMLElement) {
   });
   annotationTools.paintText(shell);
 }
-function scrollToSelectedMatch(shell: HTMLElement) {
-  if (!selectedHit) return false;
-  const mark = shell.querySelector<HTMLElement>(`mark[data-occurrence="${selectedHit.occurrence}"]`);
-  if (!mark) return false;
-  const offset = mark.getBoundingClientRect().top - viewer.getBoundingClientRect().top;
-  viewer.scrollTo({ top: viewer.scrollTop + offset - viewer.clientHeight * activePageOffset, behavior: 'auto' });
-  return true;
-}
 function updateSearchStatus() {
   const status = $('#search-status');
   if (searchState === 'failed') status.textContent = 'Unable to search this document.';
@@ -557,31 +568,41 @@ async function selectSearchHit(index: number) {
   const hit = hits[index];
   if (!hit) return;
   const epoch = ++navigationEpoch;
+  const list = $('#search-results');
+  const previous = list.children.item(selectedHitIndex);
+  previous?.classList.remove('active');
+  previous?.setAttribute('aria-current', 'false');
+  if (selectedHit) {
+    pages.children.item(selectedHit.page - 1)?.querySelectorAll('.search-match.selected')
+      .forEach(mark => mark.classList.remove('selected'));
+  }
   selectedHit = hit;
   selectedHitIndex = index;
-  pages.querySelectorAll('.search-match.selected').forEach(mark => mark.classList.remove('selected'));
-  $('#search-results').querySelectorAll<HTMLElement>('.search-result').forEach((result, resultIndex) => {
-    result.classList.toggle('active', resultIndex === index);
-    result.setAttribute('aria-current', String(resultIndex === index));
-  });
   updateSearchStatus();
-  const list = $('#search-results');
-  const button = list.querySelector<HTMLElement>('.active');
+  const button = list.children.item(index);
   if (button) {
+    button.classList.add('active');
+    button.setAttribute('aria-current', 'true');
     const rect = button.getBoundingClientRect(), bounds = list.getBoundingClientRect();
     if (rect.top < bounds.top) list.scrollTop += rect.top - bounds.top;
     else if (rect.bottom > bounds.bottom) list.scrollTop += rect.bottom - bounds.bottom;
   }
-  const shell = pages.querySelector<HTMLElement>(`.page-shell[data-page="${hit.page}"]`);
+  const shell = pages.children.item(hit.page - 1) as HTMLElement | null;
   if (!shell) return;
+  pendingMatchEpoch = epoch;
   await renderPage(shell, renderEpoch);
   const content = shell.querySelector('.page-content');
   if (content) await textLayerReady.get(content);
   if (epoch !== navigationEpoch || selectedHit !== hit) return;
-  highlightVisibleText(shell);
+  pendingMatchEpoch = undefined;
+  const marks = shell.querySelectorAll(`.search-match[data-occurrence="${hit.occurrence}"]`);
+  marks.forEach(mark => mark.classList.add('selected'));
   currentPage = hit.page;
   updatePageUi();
-  if (!scrollToSelectedMatch(shell)) await goToPage(hit.page);
+  if (marks.length) {
+    const offset = marks[0].getBoundingClientRect().top - viewer.getBoundingClientRect().top;
+    viewer.scrollTo({ top: viewer.scrollTop + offset - viewer.clientHeight * activePageOffset, behavior: 'auto' });
+  } else await goToPage(hit.page);
 }
 function moveSearchHit(direction: number) {
   if (!hits.length) return;
@@ -773,7 +794,7 @@ async function searchDocument() {
   activeSearchQuery = query;
   searchState = query ? 'searching' : 'idle';
   $('#search-results').innerHTML = '';
-  pages.querySelectorAll<HTMLElement>('.page-shell').forEach(highlightVisibleText);
+  renderedPages.forEach(highlightVisibleText);
   updateSearchStatus();
   if (!query) return;
   try {
@@ -792,9 +813,13 @@ async function searchDocument() {
 function renderSearchResults() {
   updateSearchStatus();
   $('#search-results').innerHTML = hits.map((hit, index) => `<button class="search-result${index === selectedHitIndex ? ' active' : ''}" type="button" aria-current="${index === selectedHitIndex}" data-index="${index}"><span class="search-result-location">Page ${hit.page} · match ${hit.occurrence}</span><span class="search-snippet">${escapeHtml(hit.snippet.slice(0, hit.matchStart))}<mark>${escapeHtml(hit.snippet.slice(hit.matchStart, hit.matchEnd))}</mark>${escapeHtml(hit.snippet.slice(hit.matchEnd))}</span></button>`).join('');
-  $('#search-results').querySelectorAll<HTMLButtonElement>('button').forEach(button => button.addEventListener('click', () => selectSearchHit(Number(button.dataset.index))));
-  pages.querySelectorAll('.page-shell').forEach(shell => highlightVisibleText(shell as HTMLElement));
+  renderedPages.forEach(highlightVisibleText);
 }
+
+$('#search-results').addEventListener('click', event => {
+  const button = (event.target as Element).closest<HTMLButtonElement>('.search-result');
+  if (button) void selectSearchHit(Number(button.dataset.index));
+});
 
 $('#open-button').addEventListener('click', pickDocument);
 $('#welcome-open').addEventListener('click', pickDocument);
@@ -854,14 +879,13 @@ $<HTMLInputElement>('#search-input').addEventListener('input', () => {
   searchState = 'idle';
   $('#search-results').replaceChildren();
   updateSearchStatus();
-  pages.querySelectorAll<HTMLElement>('.page-shell').forEach(highlightVisibleText);
+  renderedPages.forEach(highlightVisibleText);
   searchTimer = window.setTimeout(searchDocument, 150);
 });
 $('#previous-match').addEventListener('click', () => moveSearchHit(-1));
 $('#next-match').addEventListener('click', () => moveSearchHit(1));
 $<HTMLInputElement>('#search-input').addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); moveSearchHit(event.shiftKey ? -1 : 1); } if (event.key === 'Escape') showTab('pages'); });
 let scrollFrame = 0;
-let trimTimer: number | undefined;
 viewer.addEventListener('scroll', () => {
   if (scrollFrame) return;
   scrollFrame = requestAnimationFrame(() => {
@@ -887,8 +911,7 @@ viewer.addEventListener('scroll', () => {
   }
   if (nearest !== currentPage) { currentPage = nearest; updatePageUi(); }
   queueSessionSave();
-  window.clearTimeout(trimTimer);
-  trimTimer = window.setTimeout(trimRenderedPages, 180);
+  schedulePageTrim();
   });
 }, { passive: true });
 new ResizeObserver(() => refreshFitIfNeeded()).observe(viewer);
