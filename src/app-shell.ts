@@ -1,3 +1,4 @@
+import { isTauri } from '@tauri-apps/api/core';
 import { mountDropdown } from './dropdown';
 
 const paths: Record<string, string> = {
@@ -23,15 +24,15 @@ function icon(name: string, size = 18) { return `<svg width="${size}" height="${
 export function mountApp(app: HTMLDivElement) {
   const systemTheme = window.matchMedia('(prefers-color-scheme: dark)');
   const savedInvertImages = localStorage.getItem('invert-images') !== 'false';
+  const macHeader = isTauri() && navigator.platform.startsWith('Mac');
   document.documentElement.dataset.theme = systemTheme.matches ? 'dark' : 'light';
   document.documentElement.dataset.invertImages = String(savedInvertImages);
   app.innerHTML = `
-  <header class="toolbar">
+  <header class="toolbar"${macHeader ? ' data-window-controls="macos" data-tauri-drag-region="deep"' : ''}>
     <div class="toolbar-left">
       <button id="sidebar-toggle" class="icon-button" aria-label="Toggle sidebar" aria-controls="sidebar" aria-expanded="false" title="Toggle sidebar" disabled>${icon('panel')}</button>
-      <strong id="document-title" class="document-title">Preview Pro Max</strong>
     </div>
-    <div class="toolbar-center" id="navigation" role="group" aria-label="Page navigation and zoom" hidden>
+    <div class="toolbar-center" id="navigation" role="group" aria-label="Page navigation and zoom" data-tauri-drag-region="false" hidden>
       <button class="icon-button" id="previous-page" aria-label="Previous page" title="Previous page">${icon('chevronLeft')}</button>
       <div class="page-input-wrap"><input id="page-number" type="number" min="1" aria-label="Page number"><span id="page-total">/ 0</span></div>
       <button class="icon-button" id="next-page" aria-label="Next page" title="Next page">${icon('chevronRight')}</button>
@@ -41,10 +42,10 @@ export function mountApp(app: HTMLDivElement) {
       <button class="icon-button" id="zoom-in" aria-label="Zoom in" title="Zoom in">${icon('plus')}</button>
       <button class="icon-button" id="fit-width" aria-label="Fit width" title="Fit width">${icon('fit')}</button>
     </div>
-  <div class="toolbar-right">
+    <div class="toolbar-right">
       <div class="drawing-control document-tool" id="drawing-control" hidden>
         <button class="icon-button" id="drawing-toggle" aria-label="Drawing tools" aria-expanded="false" aria-controls="drawing-menu" title="Drawing tools">${icon('pencil')}</button>
-        <div class="drawing-menu" id="drawing-menu" hidden>
+        <div class="drawing-menu" id="drawing-menu" data-tauri-drag-region="false" hidden>
           <div class="drawing-tools" role="group" aria-label="Drawing tool">
             <button type="button" data-draw-tool="pencil" aria-label="Pencil" title="Pencil">${icon('pencil')}</button>
             <button type="button" data-draw-tool="rectangle" aria-label="Rectangle" title="Rectangle">${icon('rectangle')}</button>
@@ -68,7 +69,7 @@ export function mountApp(app: HTMLDivElement) {
       </div>
       <div class="markup-control document-tool" id="markup-control" hidden>
         <button class="icon-button" id="markup-toggle" aria-label="Markup selected text" aria-expanded="false" aria-controls="markup-menu" title="Markup selected text">${icon('highlight')}</button>
-        <div class="markup-menu" id="markup-menu" hidden>
+        <div class="markup-menu" id="markup-menu" data-tauri-drag-region="false" hidden>
           <span class="markup-heading">Selected text</span>
           <div class="markup-colors" aria-label="Highlight color">
             <button type="button" class="markup-choice markup-yellow" data-markup="yellow" aria-label="Highlight yellow" title="Highlight yellow"></button>
@@ -84,7 +85,7 @@ export function mountApp(app: HTMLDivElement) {
       <button class="icon-button document-tool" id="search-toggle" aria-label="Find in document" title="Find in document" hidden>${icon('search')}</button>
       <div class="view-control">
         <button class="icon-button" id="view-toggle" aria-label="View options" aria-expanded="false" aria-controls="view-menu" title="View options">${icon('settings')}</button>
-        <div class="view-menu" id="view-menu" role="group" aria-label="View options" hidden>
+        <div class="view-menu" id="view-menu" role="group" aria-label="View options" data-tauri-drag-region="false" hidden>
           <button class="menu-item document-tool" id="rotate" aria-label="Rotate pages" hidden>${icon('rotate', 16)}<span>Rotate clockwise</span></button>
           <div class="menu-heading">Appearance</div>
           <div id="theme-control"></div>
