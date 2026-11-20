@@ -225,7 +225,6 @@ function toast(message: string, duration = 3500) {
   window.clearTimeout(toastTimer);
   toastTimer = window.setTimeout(() => { el.hidden = true; }, duration);
 }
-function displayName(name: string) { return name.replace(/\.pdf$/i, ''); }
 function requestPassword(wrongPassword: boolean): Promise<string | null> {
   const dialog = $<HTMLDialogElement>('#password-dialog');
   const input = $<HTMLInputElement>('#pdf-password');
@@ -240,7 +239,6 @@ function requestPassword(wrongPassword: boolean): Promise<string | null> {
 }
 $<HTMLButtonElement>('#password-cancel').addEventListener('click', () => $<HTMLDialogElement>('#password-dialog').close('cancel'));
 function updateTitle() {
-  $('#document-title').textContent = pdf ? displayName(documentName) : 'Preview Pro Max';
   document.title = pdf ? `${documentName} — Preview Pro Max` : 'Preview Pro Max';
 }
 function showTab(tab: SidebarTab, focus = true) {

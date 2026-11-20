@@ -423,8 +423,18 @@ test('wheel zoom followed by scrolling does not jump back when its timer ends', 
   expect(await page.locator('#viewer').evaluate(el => el.scrollTop)).toBeCloseTo(scrolling.top, 0);
 });
 
-for (const [width, height] of [[760, 640], [480, 320]]) {
-  test(`compact toolbar fits a ${width} × ${height} window in both themes`, async ({ page }) => {
+for (const { width, height, macHeader } of [
+  { width: 760, height: 640, macHeader: false },
+  { width: 1000, height: 760, macHeader: true },
+  { width: 760, height: 640, macHeader: true },
+  { width: 480, height: 320, macHeader: true },
+]) {
+  const frame = macHeader ? 'integrated macOS' : 'system';
+  test(`toolbar fits a ${width} × ${height} window with the ${frame} header in both themes`, async ({ page }) => {
+    if (macHeader) await page.addInitScript(() => {
+      Object.assign(window, { isTauri: true });
+      Object.defineProperty(navigator, 'platform', { value: 'MacIntel' });
+    });
     await page.emulateMedia({ colorScheme: 'light' });
     await page.setViewportSize({ width, height });
     const name = 'Research notes with a very long document title and appendix.pdf';
@@ -436,6 +446,8 @@ for (const [width, height] of [[760, 640], [480, 320]]) {
     }, name);
     await page.reload();
     await expect(page.locator('.page-shell').first()).toHaveAttribute('data-rendered', 'true');
+    await expect(page.locator('.toolbar')).not.toContainText(name.replace(/\.pdf$/, ''));
+    if (macHeader) await expect(page.locator('.toolbar')).toHaveAttribute('data-tauri-drag-region', 'deep');
     await page.getByRole('tab', { name, exact: true }).focus();
     for (const theme of ['light', 'dark']) {
       if (theme === 'dark') await useViewOption(page, '#dark-mode-switch');
@@ -455,14 +467,14 @@ for (const [width, height] of [[760, 640], [480, 320]]) {
         return { buttons, headerBottom: header.bottom, tabsTop: tabs.top, navBottom: nav.bottom, navFits, sidesFit: left.right <= right.left };
       });
       for (const control of geometry.buttons) {
-        expect(control.left, control.name!).toBeGreaterThanOrEqual(0);
+        expect(control.left, control.name!).toBeGreaterThanOrEqual(macHeader && control.name === 'Toggle sidebar' ? 92 : 0);
         expect(control.right, control.name!).toBeLessThanOrEqual(width);
         expect(control.bottom, control.name!).toBeLessThanOrEqual(geometry.headerBottom);
       }
       expect(geometry.tabsTop).toBeGreaterThanOrEqual(geometry.navBottom);
       expect(geometry.navFits).toBe(true);
       expect(geometry.sidesFit).toBe(true);
-      await page.screenshot({ path: `test-results/compact-${width}-${theme}.png` });
+      await page.screenshot({ path: `test-results/compact-${frame}-${width}-${theme}.png` });
     }
     await page.getByRole('button', { name: 'Next page', exact: true }).click();
     await expect(page.locator('#page-number')).toHaveValue('2');
