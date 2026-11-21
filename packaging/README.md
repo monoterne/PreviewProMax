@@ -16,7 +16,7 @@ Review the version and both SHA-256 values, commit the updated cask and push it 
 
 ## Flatpak
 
-Use a Linux machine with Flatpak, OSTree, GnuPG, dpkg and the AppStream Compose addon. Build the project's release deb for each target architecture from the same version. Clone the distribution repository and pull its latest main before exporting so the new commits extend the installed stable refs. [Flatpak repository hosting](https://docs.flatpak.org/en/latest/hosting-a-repository.html)
+Use a Linux machine with Flatpak, OSTree, GnuPG, dpkg and the AppStream Compose addon. Use the amd64 and arm64 release debs from the same desktop workflow run. Clone the distribution repository and pull its latest main before exporting so the new commits extend the installed stable refs. [Flatpak repository hosting](https://docs.flatpak.org/en/latest/hosting-a-repository.html)
 
 ```sh
 git clone https://github.com/monoterne/preview-pro-max-flatpak.git
@@ -26,6 +26,8 @@ packaging/export-flatpak.sh "$amd64_deb" "$channel" "$fingerprint"
 packaging/export-flatpak.sh "$arm64_deb" "$channel" "$fingerprint"
 ostree --repo="$channel/repo" fsck
 ```
+
+If the public release uses a short version such as `0.3`, pass it as the fourth argument to both exports. The script validates it against the deb version (in this example, `0.3.0`).
 
 The signing key must be available to the publishing GnuPG keyring. The original publisher's backup is stored as a base64-encoded secret key in the macOS login Keychain under the service `Preview Pro Max Flatpak signing key`, account `monoterne`. To import it into a trusted Linux signing machine, pipe the Keychain value directly over SSH.
 

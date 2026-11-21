@@ -34,6 +34,10 @@ jobs:
             target: linux
             bundles: deb,rpm
             browser: webkit
+          - os: ubuntu-24.04-arm
+            target: linux-arm64
+            bundles: deb
+            browser: webkit
           - os: windows-latest
             target: win
             bundles: nsis
@@ -62,7 +66,7 @@ jobs:
         run: bun run test:native
       - run: bun tauri build ${{ matrix.config_args }} --bundles ${{ matrix.bundles }}
       - name: Upload Fedora package
-        if: runner.os == 'Linux'
+        if: matrix.target == 'linux'
         uses: actions/upload-artifact@v7
         with:
           name: preview-pro-max-linux-fedora
@@ -147,7 +151,7 @@ jobs:
           path: artifacts/*
           if-no-files-found: error
       - name: Test installed Fedora package
-        if: runner.os == 'Linux'
+        if: matrix.target == 'linux'
         run: |
           docker run --rm \
             --mount "type=bind,src=$PWD/src-tauri/target/release/bundle/rpm,dst=/packages,readonly" \
