@@ -122,7 +122,25 @@ jobs:
             cp src-tauri/target/release/preview-pro-max.exe artifacts/PreviewProMax-portable.exe
             cp src-tauri/target/release/bundle/nsis/*.exe artifacts/
           fi
+      - name: Check legacy macOS download
+        if: matrix.target == 'mac-legacy'
+        shell: bash
+        run: |
+          unpacked=$(mktemp -d "$RUNNER_TEMP/preview-mac.XXXXXX")
+          trap 'rm -rf "$unpacked"' EXIT
+          ditto -x -k artifacts/PreviewProMax-mac-legacy.app.zip "$unpacked"
+          app="$unpacked/Preview Pro Max.app"
+          test -x "$app/Contents/MacOS/preview-pro-max"
+          codesign --verify --deep --strict "$app"
+      - name: Upload legacy macOS download
+        if: matrix.target == 'mac-legacy'
+        uses: actions/upload-artifact@v7
+        with:
+          path: artifacts/PreviewProMax-mac-legacy.app.zip
+          archive: false
+          if-no-files-found: error
       - uses: actions/upload-artifact@v7
+        if: matrix.target != 'mac-legacy'
         with:
           name: preview-pro-max-${{ matrix.target }}
           path: artifacts/*
