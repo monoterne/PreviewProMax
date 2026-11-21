@@ -4,7 +4,7 @@ set -euo pipefail
 version=${1:?Pass the released version without v}
 assets=${2:?Pass the release asset directory}
 tap=${3:?Pass the Homebrew tap checkout}
-[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+[[ "$version" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]
 checksum() { shasum -a 256 "$assets/PreviewProMax-mac-$1.app.zip" | cut -d' ' -f1; }
 legacy=$(checksum legacy)
 adaptive=$(checksum adaptive)

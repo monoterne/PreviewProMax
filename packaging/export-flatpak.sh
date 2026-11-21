@@ -8,6 +8,10 @@ id=com.previewpromax.viewer
 test "$(dpkg-deb -f "$deb" Package)" = preview-pro-max
 version=$(dpkg-deb -f "$deb" Version)
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+release_version=${4:-$version}
+if [[ "$release_version" != "$version" ]]; then
+  [[ "$release_version" =~ ^[0-9]+\.[0-9]+$ && "$version" == "$release_version.0" ]]
+fi
 case "$(dpkg-deb -f "$deb" Architecture)" in
   amd64) arch=x86_64 ;;
   arm64) arch=aarch64 ;;
@@ -54,7 +58,7 @@ cat > "$app/files/share/metainfo/$id.metainfo.xml" <<META
   <description><p>Open PDFs in tabs, navigate outlines, find text and add annotations.</p></description>
   <launchable type="desktop-id">$id.desktop</launchable>
   <url type="homepage">https://github.com/monoterne/PreviewProMax</url>
-  <releases><release version="$version" date="$(date -u +%F)"/></releases>
+  <releases><release version="$release_version" date="$(date -u +%F)"/></releases>
 </component>
 META
 catalog="$app/files/share/app-info"
