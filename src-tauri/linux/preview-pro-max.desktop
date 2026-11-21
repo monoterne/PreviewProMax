@@ -1,8 +1,9 @@
 [Desktop Entry]
 Type=Application
-Name={{name}}
-Exec={{exec}} %F
-Icon={{icon}}
-Categories={{categories}}
-MimeType={{mime_type}};
+Name=Preview Pro Max
+Exec=preview-pro-max %F
+Icon=preview-pro-max
+Categories=Office;
+MimeType=application/pdf;
 Terminal=false
+StartupWMClass=preview-pro-max

@@ -51,7 +51,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev desktop-file-utils xdotool xvfb
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev desktop-file-utils weston xdotool xvfb
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
       - run: bun test
@@ -110,6 +110,7 @@ jobs:
         run: |
           sudo apt-get install -y ./src-tauri/target/release/bundle/deb/*.deb
           dbus-run-session -- xvfb-run -a bash tests/native/linux.sh "$RUNNER_TEMP/preview-fixture.pdf"
+          dbus-run-session -- bash tests/native/wayland.sh
       - name: Prepare downloads
         shell: bash
         run: |

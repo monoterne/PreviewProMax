@@ -7,9 +7,12 @@ export XDG_CONFIG_HOME="$work/config" XDG_DATA_HOME="$work/data" XDG_CACHE_HOME=
 export XDG_RUNTIME_DIR="$work/runtime"
 mkdir -m 700 "$XDG_RUNTIME_DIR"
 export GDK_BACKEND=x11 LIBGL_ALWAYS_SOFTWARE=1
-desktop='/usr/share/applications/Preview Pro Max.desktop'
+desktop='/usr/share/applications/preview-pro-max.desktop'
 desktop-file-validate "$desktop"
 grep -q '^MimeType=.*application/pdf;' "$desktop"
+grep -Fxq 'Icon=preview-pro-max' "$desktop"
+test -s /usr/share/icons/hicolor/128x128/apps/preview-pro-max.png
+grep -Fxq 'NoDisplay=true' '/usr/share/applications/Preview Pro Max.desktop'
 mkdir -p "$work/other"
 cp "$fixture" "$work/first file.pdf"
 cp "$work/first file.pdf" "$work/second.pdf"
