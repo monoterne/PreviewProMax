@@ -4,7 +4,7 @@ A desktop PDF viewer for Linux, macOS and Windows. The interface uses Bun, TypeS
 
 ## Install and update
 
-**macOS.** The Homebrew cask supports Apple silicon on macOS 15 and later. It selects the legacy build on Sequoia and the adaptive build on newer systems.
+**macOS.** On Apple silicon, Homebrew installs the legacy build on macOS 11 Big Sur through macOS 15 Sequoia. It installs the adaptive build on macOS 26 Tahoe and later.
 
 ```sh
 brew tap monoterne/preview-pro-max
