@@ -5,10 +5,16 @@
     "category": "Productivity",
     "linux": {
       "deb": {
-        "desktopTemplate": "linux/preview-pro-max.desktop"
+        "desktopTemplate": "linux/preview-pro-max-legacy.desktop.in",
+        "files": {
+          "/usr/share/applications/preview-pro-max.desktop": "linux/preview-pro-max.desktop"
+        }
       },
       "rpm": {
-        "desktopTemplate": "linux/preview-pro-max.desktop"
+        "desktopTemplate": "linux/preview-pro-max-legacy.desktop.in",
+        "files": {
+          "/usr/share/applications/preview-pro-max.desktop": "linux/preview-pro-max.desktop"
+        }
       }
     }
   }
