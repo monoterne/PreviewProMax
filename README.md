@@ -2,6 +2,30 @@
 
 A desktop PDF viewer for Linux, macOS and Windows. The interface uses Bun, TypeScript, CSS, and Mozilla PDF.js; Tauri supplies the native window and file picker. The finished app uses the operating system webview and includes no Node or Bun runtime.
 
+## Install and update
+
+**macOS.** The Homebrew cask supports Apple silicon on macOS 15 and later. It selects the legacy build on Sequoia and the adaptive build on newer systems.
+
+```sh
+brew tap monoterne/preview-pro-max
+brew install --cask monoterne/preview-pro-max/preview-pro-max
+```
+
+To update, run `brew update` followed by `brew upgrade --cask preview-pro-max`. The macOS builds are ad-hoc signed.
+
+**Linux.** The signed Flatpak repository provides the stable app for x86-64 and ARM64. Flathub supplies its GNOME runtime.
+
+```sh
+flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+flatpak remote-add --user --if-not-exists preview-pro-max https://raw.githubusercontent.com/monoterne/preview-pro-max-flatpak/main/preview-pro-max.flatpakrepo
+flatpak install --user preview-pro-max com.previewpromax.viewer
+flatpak run com.previewpromax.viewer
+```
+
+To update, run `flatpak update --user com.previewpromax.viewer`. You can also use a software center with Flatpak support.
+
+Maintainers can find publishing instructions and Windows distribution options in the [release guide](packaging/README.md).
+
 ## Features
 
 - Open PDFs, including password protected PDFs, from the file picker, drag and drop, or the operating system's PDF file association; unsupported files show a clear error
