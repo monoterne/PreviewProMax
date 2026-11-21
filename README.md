@@ -44,6 +44,8 @@ For x86-64 Linux, unzip the artifact for your distribution and run its install c
 
 The package manager installs the system WebKitGTK 4.1 runtime. Open Preview Pro Max from the applications menu, use **Open With** on PDFs, or pass one or more file paths to `preview-pro-max`.
 
+On macOS 15, download `PreviewProMax-mac-legacy.app.zip` from the workflow's Artifacts section and double-click it in Finder to extract `Preview Pro Max.app`.
+
 macOS builds use an ad-hoc signature. Public distribution without installation prompts requires an Apple Developer ID and notarization.
 
 PDF rendering is provided by [Mozilla PDF.js](https://mozilla.github.io/pdf.js/) under the Apache 2.0 license.
