@@ -889,29 +889,32 @@ let scrollFrame = 0;
 viewer.addEventListener('scroll', () => {
   if (scrollFrame) return;
   scrollFrame = requestAnimationFrame(() => {
-  scrollFrame = 0;
-  if (!pdf) return;
-  const center = viewer.getBoundingClientRect().top + viewer.clientHeight * activePageOffset;
-  let low = 0, high = pages.children.length - 1;
-  let nearest = currentPage;
-  while (low <= high) {
-    const middle = (low + high) >>> 1;
-    const rect = pages.children[middle].getBoundingClientRect();
-    if (rect.bottom < center) low = middle + 1;
-    else if (rect.top > center) high = middle - 1;
-    else { nearest = middle + 1; break; }
-  }
-  if (low > high) {
-    const candidates = [high, low].filter(index => index >= 0 && index < pages.children.length);
-    nearest = candidates.reduce((best, index) => {
-      const rect = pages.children[index].getBoundingClientRect();
-      const gap = Math.max(rect.top - center, center - rect.bottom, 0);
-      return gap < best.gap ? { page: index + 1, gap } : best;
-    }, { page: currentPage, gap: Infinity }).page;
-  }
-  if (nearest !== currentPage) { currentPage = nearest; updatePageUi(); }
-  queueSessionSave();
-  schedulePageTrim();
+    scrollFrame = 0;
+    if (!pdf) return;
+    const center = viewer.getBoundingClientRect().top + viewer.clientHeight * activePageOffset;
+    let low = 0, high = pages.children.length - 1;
+    // Most trackpad updates stay on the same page. Probe it first, then use
+    // binary search for larger jumps and the existing gap rule between pages.
+    let middle = currentPage - 1;
+    let nearest = currentPage;
+    while (low <= high) {
+      const rect = pages.children[middle].getBoundingClientRect();
+      if (rect.bottom < center) low = middle + 1;
+      else if (rect.top > center) high = middle - 1;
+      else { nearest = middle + 1; break; }
+      middle = (low + high) >>> 1;
+    }
+    if (low > high) {
+      const candidates = [high, low].filter(index => index >= 0 && index < pages.children.length);
+      nearest = candidates.reduce((best, index) => {
+        const rect = pages.children[index].getBoundingClientRect();
+        const gap = Math.max(rect.top - center, center - rect.bottom, 0);
+        return gap < best.gap ? { page: index + 1, gap } : best;
+      }, { page: currentPage, gap: Infinity }).page;
+    }
+    if (nearest !== currentPage) { currentPage = nearest; updatePageUi(); }
+    queueSessionSave();
+    schedulePageTrim();
   });
 }, { passive: true });
 new ResizeObserver(() => refreshFitIfNeeded()).observe(viewer);

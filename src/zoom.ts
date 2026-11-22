@@ -18,7 +18,34 @@ export function mountZoom(options: ZoomOptions) {
   let pinchStart: number | null = null;
   let pinchAnchor: ZoomPoint | null = null;
   let wheelTimer: number | undefined;
-  let nativePinchEnded = -Infinity;
+  let pinchTailTimer: number | undefined;
+  const macGestures = navigator.platform.startsWith('Mac') && 'GestureEvent' in window;
+  let zoomModifierDown = false;
+
+  function cancelWheelZoom(event: WheelEvent) {
+    if (options.enabled() && (event.ctrlKey || event.metaKey)) event.preventDefault();
+  }
+
+  function updateWheelCancellation() {
+    // A cancelable wheel listener makes WKWebView consult the main thread even
+    // for an ordinary two-finger scroll. A native pinch has its own gesture events.
+    if (!macGestures || zoomModifierDown || pinchStart !== null || pinchTailTimer !== undefined) {
+      viewer.addEventListener('wheel', cancelWheelZoom, { passive: false });
+    } else {
+      viewer.removeEventListener('wheel', cancelWheelZoom);
+    }
+  }
+
+  if (macGestures) {
+    const updateModifiers = (event: KeyboardEvent | PointerEvent) => {
+      zoomModifierDown = event.ctrlKey || event.metaKey;
+      updateWheelCancellation();
+    };
+    window.addEventListener('keydown', updateModifiers, true);
+    window.addEventListener('keyup', updateModifiers, true);
+    viewer.addEventListener('pointerenter', updateModifiers);
+  }
+  updateWheelCancellation();
 
   function capture(x: number, y: number): ZoomPoint | null {
     const hit = document.elementFromPoint(x, y)?.closest<HTMLElement>('.page-shell');
@@ -76,8 +103,11 @@ export function mountZoom(options: ZoomOptions) {
 
   function commit() {
     window.clearTimeout(wheelTimer);
-    pinchStart = null;
-    pinchAnchor = null;
+    if (pinchStart !== null) {
+      pinchStart = null;
+      pinchAnchor = null;
+      updateWheelCancellation();
+    }
     if (previewValue === null) return;
     const next = previewValue;
     // Capture the current location before changing layout. A normal scroll may
@@ -101,25 +131,25 @@ export function mountZoom(options: ZoomOptions) {
   viewer.addEventListener('wheel', event => {
     if (!options.enabled()) return;
     if (!(event.ctrlKey || event.metaKey)) {
-      if (pinchStart === null) commit();
+      if (previewValue !== null && pinchStart === null) commit();
       return;
     }
-    event.preventDefault();
     // WKWebView can emit both streams for one pinch, including a final wheel
     // event after gestureend. Let the native gesture own its entire sequence.
-    if (pinchStart !== null || performance.now() - nativePinchEnded < 120) return;
+    if (pinchStart !== null || pinchTailTimer !== undefined) return;
     const pixels = event.deltaY * (event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 :
       event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? viewer.clientHeight : 1);
     preview((previewValue ?? options.value()) * Math.exp(-pixels / 400), capture(event.clientX, event.clientY));
     window.clearTimeout(wheelTimer);
     wheelTimer = window.setTimeout(commit, 400);
-  }, { passive: false });
+  }, { passive: true });
 
   viewer.addEventListener('gesturestart', event => {
     if (!options.enabled()) return;
     event.preventDefault();
     commit();
     pinchStart = options.value();
+    updateWheelCancellation();
     // The first change supplies the centroid; some WKWebView gesturestart
     // events have no usable coordinates.
     pinchAnchor = null;
@@ -140,10 +170,18 @@ export function mountZoom(options: ZoomOptions) {
   viewer.addEventListener('gestureend', event => {
     if (pinchStart === null) return;
     event.preventDefault();
-    nativePinchEnded = performance.now();
+    window.clearTimeout(pinchTailTimer);
+    pinchTailTimer = window.setTimeout(() => {
+      pinchTailTimer = undefined;
+      updateWheelCancellation();
+    }, 120);
     commit();
   }, { passive: false });
-  window.addEventListener('blur', commit);
+  window.addEventListener('blur', () => {
+    commit();
+    zoomModifierDown = false;
+    updateWheelCancellation();
+  });
 
   return { set, commit, restore };
 }
