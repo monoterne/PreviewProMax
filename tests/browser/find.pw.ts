@@ -409,6 +409,38 @@ test('pinch end ignores duplicate wheel zoom and ordinary scrolling can resume',
   await expect.poll(() => page.locator('#viewer').evaluate(el => el.scrollTop)).toBeGreaterThan(before + 100);
 });
 
+test('Mac WebKit scrolls without waiting for the wheel zoom handler', async ({ page, browserName }) => {
+  test.skip(browserName !== 'webkit' || process.platform !== 'darwin');
+  const viewer = page.locator('#viewer');
+  await viewer.hover();
+  const initialZoom = await page.locator('#zoom-label').textContent();
+
+  for (const key of ['Control', 'Meta'] as const) {
+    await page.keyboard.down(key);
+    const canceled = await viewer.evaluate((el, key) => {
+      const event = new WheelEvent('wheel', { bubbles: true, cancelable: true,
+        ctrlKey: key === 'Control', metaKey: key === 'Meta', deltaY: -20, clientX: 600, clientY: 350 });
+      el.dispatchEvent(event);
+      return event.defaultPrevented;
+    }, key);
+    expect(canceled).toBe(true);
+    await page.keyboard.up(key);
+  }
+  await expect(page.locator('#zoom-label')).not.toHaveText(initialZoom!);
+  // Start a fresh scroll after zoom settles and WebKit publishes its wheel regions.
+  await expect(page.locator('#pages')).not.toHaveAttribute('data-zoom-preview', 'true');
+  // Only browser-generated input reflects WebKit's synchronous wheel region.
+  await viewer.evaluate(el => {
+    el.addEventListener('wheel', event => {
+      el.setAttribute('data-wheel-cancelable', String(event.cancelable));
+    }, { passive: true, once: true });
+  });
+  const before = await viewer.evaluate(el => el.scrollTop);
+  await page.mouse.wheel(0, 220);
+  await expect(viewer).toHaveAttribute('data-wheel-cancelable', 'false');
+  await expect.poll(() => viewer.evaluate(el => el.scrollTop)).toBeGreaterThan(before + 100);
+});
+
 test('wheel zoom followed by scrolling does not jump back when its timer ends', async ({ page }) => {
   await page.locator('#viewer').dispatchEvent('wheel', { ctrlKey: true, deltaY: -30, clientX: 600, clientY: 350 });
   const scrolling = await page.evaluate(() => {
