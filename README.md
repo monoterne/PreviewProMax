@@ -1,19 +1,23 @@
 # Preview Pro Max
 
-A desktop PDF viewer for Linux, macOS and Windows. The interface uses Bun, TypeScript, CSS, and Mozilla PDF.js; Tauri supplies the native window and file picker. The finished app uses the operating system webview and includes no Node or Bun runtime.
+A desktop PDF viewer for macOS, Windows and Linux. It uses Mozilla PDF.js and build with Tauri.
 
 ## Install and update
 
-**macOS.** On Apple silicon, Homebrew installs the legacy build on macOS 11 Big Sur through macOS 15 Sequoia. It installs the adaptive build on macOS 26 Tahoe and later.
+**macOS.** (Apple Silicon only) 
 
 ```sh
 brew tap monoterne/preview-pro-max
 brew install --cask monoterne/preview-pro-max/preview-pro-max
 ```
 
-To update, run `brew update` followed by `brew upgrade --cask preview-pro-max`. The macOS builds are ad-hoc signed.
+Homebrew installs the legacy build fpr macOS 11-15 and, installs the adaptive build on macOS 26 Tahoe and later.
 
-**Linux.** The signed Flatpak repository provides the stable app for x86-64 and ARM64. Flathub supplies its GNOME runtime.
+To update, run `brew upgrade --cask preview-pro-max`.
+
+**Linux.** 
+The signed Flatpak repository provides the stable app for x86-64 and ARM64. 
+Flathub supplies its GNOME runtime.
 
 ```sh
 flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
@@ -24,10 +28,7 @@ flatpak run com.previewpromax.viewer
 
 To update, run `flatpak update --user com.previewpromax.viewer`. You can also use a software center with Flatpak support.
 
-Maintainers can find publishing instructions and Windows distribution options in the [release guide](packaging/README.md).
-
 ## Features
-
 - Open PDFs, including password protected PDFs, from the file picker, drag and drop, or the operating system's PDF file association; unsupported files show a clear error
 - Page thumbnails, nested table of contents, page navigation, zoom, fit width, and rotation
 - Find every occurrence of readable text and select a result
@@ -37,11 +38,12 @@ Maintainers can find publishing instructions and Windows distribution options in
 
 PDF.js opens PDF documents, including PDFs whose names do not end in `.pdf`. The app accepts any file from the picker or a drop so PDF.js can validate it, then reports unsupported files without closing the current document.
 
-Use **View options** in the toolbar for rotation and appearance settings. Dark mode changes only the display. The **Invert images** switch is available while dark mode is on. Turn it off to leave embedded images in their original colors while darkening the rest of each page.
+Use **View options** in the toolbar for rotation and appearance settings. 
+Dark mode changes only the display. The **Invert images** switch is available while dark mode is on. Turn it off to leave embedded images in their original colors while darkening the rest of each page.
 
 ## Development
 
-Install [Bun](https://bun.sh/) and the [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/), including Rust and the platform's development tools. Node.js is not required.
+Install [Bun](https://bun.sh/) and the [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/), including Rust and the platform's development tools.
 
 ```sh
 bun install
@@ -68,7 +70,7 @@ For x86-64 Linux, unzip the artifact for your distribution and run its install c
 
 The package manager installs the system WebKitGTK 4.1 runtime. Open Preview Pro Max from the applications menu, use **Open With** on PDFs, or pass one or more file paths to `preview-pro-max`.
 
-On macOS 15, download `PreviewProMax-mac-legacy.app.zip` from the workflow's Artifacts section and double-click it in Finder to extract `Preview Pro Max.app`.
+On macOS 15 and prior, download `PreviewProMax-mac-legacy.app.zip` from the workflow's Artifacts section and double-click it in Finder to extract `Preview Pro Max.app`.
 
 macOS builds use an ad-hoc signature. Public distribution without installation prompts requires an Apple Developer ID and notarization.
 
