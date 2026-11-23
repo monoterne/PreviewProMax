@@ -1,9 +1,11 @@
 import './compatibility';
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
+import { isTauri } from '@tauri-apps/api/core';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 import './style.css';
-import { pickDocumentPaths, readDocument, onOpenPath, onMenuAction, newWindow, closeWindow, windowReady, getSessions, saveSession, archiveSession, type OpenedDocument, type SavedTab, type SavedWindow } from './desktop';
+import { pickDocumentPaths, readDocument, onOpenPath, onMenuAction, newWindow, closeWindow, windowReady, getSessions, saveSession, archiveSession, restoreSessionFrame, type OpenedDocument, type SavedTab, type SavedWindow } from './desktop';
 import { mountApp } from './app-shell';
 import { releaseCanvas, releaseCanvases, renderLinks, renderRaster, renderText, type PdfDestination } from './pdf-rendering';
 import { mountZoom, type ZoomPoint } from './zoom';
@@ -94,6 +96,7 @@ let recentWindows: SavedWindow[] = [];
 let restoringSession = false;
 let sessionSaveTimer: number | undefined;
 let sessionWrite = Promise.resolve();
+const desktopWindow = isTauri() ? getCurrentWindow() : null;
 
 function renderRecentWindows() {
   const section = $('#recent-windows');
@@ -783,7 +786,10 @@ async function restoreSavedWindow(saved: SavedWindow, startup = false) {
       restored.push(opened);
     }
     const target = restored[saved.active] || restored.find(id => id);
-    if (target) activateDocumentTab(target);
+    if (target) {
+      if (!startup && desktopWindow) await restoreSessionFrame(saved.id).catch(console.error);
+      activateDocumentTab(target);
+    }
   } finally {
     restoringSession = false;
     queueSessionSave();
@@ -928,6 +934,11 @@ viewer.addEventListener('scroll', () => {
   });
 }, { passive: true });
 new ResizeObserver(() => refreshFitIfNeeded()).observe(viewer);
+if (desktopWindow) {
+  const saveFrame = () => { if (documentTabs.some(tab => tab.pdf)) queueSessionSave(); };
+  void Promise.all([desktopWindow.onMoved(saveFrame), desktopWindow.onResized(saveFrame)])
+    .catch(error => console.error('Unable to listen for window geometry changes:', error));
+}
 window.addEventListener('keydown', event => {
   if (event.key === 'Escape' && annotationTools.dismissDrawing()) return;
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'n') { event.preventDefault(); void newWindow().catch(error => toast(String(error))); return; }
@@ -943,7 +954,8 @@ window.addEventListener('keydown', event => {
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'f') { event.preventDefault(); if (pdf) { setSidebar(true); showTab('search'); } }
   if ((event.metaKey || event.ctrlKey) && (event.key === '+' || event.key === '=')) { event.preventDefault(); commitZoomPreview(); setZoom(zoom + 0.15); }
   if ((event.metaKey || event.ctrlKey) && event.key === '-') { event.preventDefault(); commitZoomPreview(); setZoom(zoom - 0.15); }
-  if (event.defaultPrevented || (event.target instanceof Element && event.target.closest('input, textarea, button, [role=tab], [contenteditable=true]'))) return;
+  if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey ||
+    (event.target instanceof Element && event.target.closest('input, textarea, button, [role=tab], [contenteditable=true]'))) return;
   if (event.key === 'ArrowRight' || event.key === 'PageDown') { event.preventDefault(); goToPage(currentPage + 1); }
   if (event.key === 'ArrowLeft' || event.key === 'PageUp') { event.preventDefault(); goToPage(currentPage - 1); }
 });

@@ -6,7 +6,12 @@ use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
 };
 use tauri::ipc::Response;
-use tauri::{Emitter, Manager, WebviewWindow, WebviewWindowBuilder};
+use tauri::{Emitter, Manager, WebviewWindow, WebviewWindowBuilder, Window};
+
+#[cfg(target_os = "macos")]
+mod macos;
+mod window_frame;
+use window_frame::WindowFrame;
 
 #[derive(Default)]
 struct PendingDocuments(Mutex<HashMap<String, VecDeque<String>>>);
@@ -32,12 +37,16 @@ struct SavedWindow {
     tabs: Vec<SavedTab>,
     active: usize,
     updated: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    frame: Option<WindowFrame>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
 struct StoredSessions {
     windows: Vec<SavedWindow>,
     open: Vec<String>,
+    #[serde(default, rename = "lastFrame", skip_serializing_if = "Option::is_none")]
+    last_frame: Option<WindowFrame>,
 }
 
 struct SessionData {
@@ -88,12 +97,55 @@ impl SessionManager {
         std::fs::rename(pending, &self.path).map_err(|e| e.to_string())
     }
 
-    fn close(&self, label: &str) {
-        if let Ok(mut data) = self.data.lock() {
-            if let Some(id) = data.labels.remove(label) {
-                data.stored.open.retain(|item| item != &id);
-                let _ = self.write(&data.stored);
+    fn finish_window(&self, window: &Window, archive: bool) {
+        let frame = WindowFrame::capture(window);
+        let Ok(mut data) = self.data.lock() else {
+            return;
+        };
+        let id = data.labels.get(window.label()).cloned();
+        let mut changed = false;
+        if let Some(frame) = frame {
+            if let Some(saved) = data
+                .stored
+                .windows
+                .iter_mut()
+                .find(|saved| Some(&saved.id) == id.as_ref())
+            {
+                changed |= saved.frame.as_ref() != Some(&frame);
+                saved.frame = Some(frame.clone());
             }
+            changed |= data.stored.last_frame.as_ref() != Some(&frame);
+            data.stored.last_frame = Some(frame);
+        }
+        if let (true, Some(id)) = (archive, id) {
+            changed = true;
+            data.labels.remove(window.label());
+            data.stored.open.retain(|item| item != &id);
+        }
+        if changed {
+            if let Err(error) = self.write(&data.stored) {
+                eprintln!("Unable to save window session: {error}");
+            }
+        }
+    }
+
+    fn restore_frame(&self, window: &Window, session_id: Option<&str>) {
+        let frame = self.data.lock().ok().and_then(|data| {
+            let id = session_id.or_else(|| data.labels.get(window.label()).map(String::as_str));
+            match id {
+                Some(id) => data
+                    .stored
+                    .windows
+                    .iter()
+                    .find(|saved| saved.id == id)?
+                    .frame
+                    .clone(),
+                None if window.label() == "main" => data.stored.last_frame.clone(),
+                None => None,
+            }
+        });
+        if let Some(frame) = frame {
+            frame.restore(window);
         }
     }
 }
@@ -116,14 +168,23 @@ fn get_sessions(
 
 #[tauri::command]
 fn save_session(
-    window: WebviewWindow,
+    window: Window,
     state: tauri::State<'_, SessionManager>,
-    session: SavedWindow,
+    mut session: SavedWindow,
 ) -> Result<(), String> {
     if session.tabs.is_empty() || session.id.is_empty() {
         return Ok(());
     }
+    let frame = WindowFrame::capture(&window);
     let mut data = state.data.lock().map_err(|e| e.to_string())?;
+    session.frame = frame.or_else(|| {
+        data.stored
+            .windows
+            .iter()
+            .find(|saved| saved.id == session.id)?
+            .frame
+            .clone()
+    });
     data.labels
         .insert(window.label().to_string(), session.id.clone());
     data.stored.windows.retain(|item| item.id != session.id);
@@ -144,8 +205,17 @@ fn save_session(
 }
 
 #[tauri::command]
-fn archive_session(window: WebviewWindow, state: tauri::State<'_, SessionManager>) {
-    state.close(window.label());
+fn archive_session(window: Window, state: tauri::State<'_, SessionManager>) {
+    state.finish_window(&window, true);
+}
+
+#[tauri::command]
+fn restore_session_frame(
+    window: Window,
+    state: tauri::State<'_, SessionManager>,
+    session_id: String,
+) {
+    state.restore_frame(&window, Some(&session_id));
 }
 
 fn is_file(path: &str) -> bool {
@@ -194,9 +264,14 @@ async fn new_window(app: tauri::AppHandle) -> Result<String, String> {
 fn window_ready(window: WebviewWindow, dark: bool) -> Result<(), String> {
     // Leave room for macOS half-screen tiles on smaller displays.
     #[cfg(target_os = "macos")]
+    {
+        window
+            .set_min_size(Some(tauri::LogicalSize::new(480.0, 320.0)))
+            .map_err(|e| e.to_string())?;
+    }
     window
-        .set_min_size(Some(tauri::LogicalSize::new(480.0, 320.0)))
-        .map_err(|e| e.to_string())?;
+        .state::<SessionManager>()
+        .restore_frame(&window.as_ref().window(), None);
     let color = if dark {
         tauri::window::Color(31, 32, 35, 255)
     } else {
@@ -210,8 +285,10 @@ fn window_ready(window: WebviewWindow, dark: bool) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn close_window(window: WebviewWindow) -> Result<(), String> {
-    window.state::<SessionManager>().close(window.label());
+fn close_window(window: Window) -> Result<(), String> {
+    window
+        .state::<SessionManager>()
+        .finish_window(&window, true);
     window.close().map_err(|e| e.to_string())
 }
 
@@ -374,7 +451,8 @@ pub fn run() {
             window_ready,
             get_sessions,
             save_session,
-            archive_session
+            archive_session,
+            restore_session_frame
         ])
         .setup(|app| {
             let manager = SessionManager::new(app.handle());
@@ -400,7 +478,10 @@ pub fn run() {
                 let _ = create_window(app.handle().clone(), Some(id));
             }
             #[cfg(target_os = "macos")]
-            app.set_menu(desktop_menu(app.handle())?)?;
+            {
+                app.set_menu(desktop_menu(app.handle())?)?;
+                macos::install_tiling_shortcuts(app.handle().clone());
+            }
             for arg in std::env::args_os().skip(1) {
                 if let Ok(path) = std::path::absolute(arg) {
                     queue_document(app.handle(), path);
@@ -433,11 +514,12 @@ pub fn run() {
             }
         })
         .on_window_event(|window, event| {
-            if matches!(event, tauri::WindowEvent::CloseRequested { .. })
-                && !QUITTING.load(Ordering::Relaxed)
-                && window.app_handle().webview_windows().len() > 1
-            {
-                window.state::<SessionManager>().close(window.label());
+            if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+                let archive = !QUITTING.load(Ordering::Relaxed)
+                    && window.app_handle().webview_windows().len() > 1;
+                window
+                    .state::<SessionManager>()
+                    .finish_window(window, archive);
             }
             if matches!(event, tauri::WindowEvent::Destroyed) {
                 if let Ok(mut pending) = window.state::<PendingDocuments>().0.lock() {
@@ -450,6 +532,10 @@ pub fn run() {
         .run(|app, event| {
             if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
                 QUITTING.store(true, Ordering::Relaxed);
+                for window in app.webview_windows().values() {
+                    app.state::<SessionManager>()
+                        .finish_window(&window.as_ref().window(), false);
+                }
             }
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Opened { urls } = event {

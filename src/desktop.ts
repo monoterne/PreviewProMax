@@ -9,6 +9,7 @@ export type SessionInfo = { restore: SavedWindow | null; recent: SavedWindow[] }
 export const getSessions = () => invoke<SessionInfo>('get_sessions');
 export const saveSession = (session: SavedWindow) => invoke<void>('save_session', { session });
 export const archiveSession = () => invoke<void>('archive_session');
+export const restoreSessionFrame = (sessionId: string) => invoke<void>('restore_session_frame', { sessionId });
 
 export async function readDocument(path: string): Promise<OpenedDocument> {
   const bytes = await invoke<ArrayBuffer>('read_document', { path });

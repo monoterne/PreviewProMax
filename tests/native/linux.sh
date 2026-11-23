@@ -2,7 +2,7 @@
 set -euo pipefail
 fixture=${1:?Pass the path to the smoke test PDF}
 work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
+trap 'if [[ -n "${reopened:-}" ]]; then kill "$reopened" 2>/dev/null || true; fi; rm -rf "$work"' EXIT
 export XDG_CONFIG_HOME="$work/config" XDG_DATA_HOME="$work/data" XDG_CACHE_HOME="$work/cache"
 export XDG_RUNTIME_DIR="$work/runtime"
 mkdir -m 700 "$XDG_RUNTIME_DIR"
@@ -36,8 +36,28 @@ wait_for_tabs "$(jq -cn --args '$ARGS.positional' "$work/first file.pdf" "$work/
 (cd "$work/other" && timeout 30 preview-pro-max 'forwarded file.pdf')
 wait_for_tabs "$(jq -cn --args '$ARGS.positional' "$work/first file.pdf" "$work/second.pdf" "$work/other/forwarded file.pdf")"
 
-# Find text on the last page in the real WebKitGTK view, then verify navigation.
+# Move and resize the native window, then reopen the saved session.
 window=$(xdotool search --onlyvisible --name 'Preview Pro Max$' | head -n 1)
+xdotool windowmove "$window" 80 60
+xdotool windowsize "$window" 900 620
+frame_filter='.windows[0].frame | .kind == "desktop" and .position == [80, 60] and .size == [900, 620]'
+for ((i=0; i<60; i++)); do
+  if jq -e "$frame_filter" "$session" >/dev/null 2>&1; then break; fi
+  sleep 0.25
+done
+jq -e "$frame_filter" "$session" >/dev/null
+kill "$(xdotool getwindowpid "$window")"
+for ((i=0; i<60; i++)); do
+  if ! xdotool getwindowname "$window" >/dev/null 2>&1; then break; fi
+  sleep 0.25
+done
+preview-pro-max &
+reopened=$!
+window=$(timeout 30 xdotool search --sync --all --onlyvisible --pid "$reopened" --name 'Preview Pro Max$' | head -n 1)
+geometry=$(xdotool getwindowgeometry --shell "$window" | sed -nE '/^(X|Y|WIDTH|HEIGHT)=/p')
+test "$geometry" = $'X=80\nY=60\nWIDTH=900\nHEIGHT=620'
+
+# Find text on the last page in the real WebKitGTK view, then verify navigation.
 xdotool windowfocus --sync "$window"
 xdotool key ctrl+f
 xdotool type --clearmodifiers 'Page 24'
