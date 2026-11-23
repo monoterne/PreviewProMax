@@ -28,6 +28,13 @@ flatpak run com.previewpromax.viewer
 
 To update, run `flatpak update --user com.previewpromax.viewer`. You can also use a software center with Flatpak support.
 
+## Screenshots
+
+| Light mode | Dark mode |
+| --- | --- |
+| ![PDF viewer in light mode with page thumbnails](docs/screenshots/viewer-light.png) | ![PDF viewer in dark mode with page thumbnails](docs/screenshots/viewer-dark.png) |
+| ![New tab in light mode with previously open windows](docs/screenshots/new-tab-light.png) | ![New tab in dark mode with previously open windows](docs/screenshots/new-tab-dark.png) |
+
 ## Features
 - Open PDFs, including password protected PDFs, from the file picker, drag and drop, or the operating system's PDF file association; unsupported files show a clear error
 - Page thumbnails, nested table of contents, page navigation, zoom, fit width, and rotation
