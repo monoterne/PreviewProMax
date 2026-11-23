@@ -4,12 +4,18 @@ import { darkenOutsideImages } from './dark-page';
 
 type Viewport = ReturnType<PDFPageProxy['getViewport']>;
 
+export function releaseCanvas(canvas: HTMLCanvasElement) {
+  canvas.width = 0;
+  canvas.height = 0;
+}
+
 export function releaseCanvases(root: Element) {
-  root.querySelectorAll('canvas').forEach(canvas => { canvas.width = 0; canvas.height = 0; });
+  root.querySelectorAll('canvas').forEach(releaseCanvas);
 }
 
 // Main pages and thumbnails use the same bounded raster and dark-page treatment.
-export async function renderRaster(page: PDFPageProxy, viewport: Viewport, ratio: number, preserveImages: boolean) {
+export async function renderRaster(page: PDFPageProxy, viewport: Viewport, ratio: number, preserveImages: boolean, signal: AbortSignal) {
+  signal.throwIfAborted();
   const canvas = document.createElement('canvas');
   ratio = Math.min(ratio, Math.sqrt(8_000_000 / (viewport.width * viewport.height)));
   canvas.width = Math.max(1, Math.floor(viewport.width * ratio));
@@ -20,15 +26,23 @@ export async function renderRaster(page: PDFPageProxy, viewport: Viewport, ratio
   if (!context) throw new Error('Canvas is unavailable.');
   try {
     if (preserveImages) page.imageCoordinates = null;
-    await page.render({ canvasContext: context, canvas, viewport,
-      transform: ratio === 1 ? undefined : [ratio, 0, 0, ratio, 0, 0], recordImages: preserveImages }).promise;
+    const task = page.render({ canvasContext: context, canvas, viewport,
+      transform: ratio === 1 ? undefined : [ratio, 0, 0, ratio, 0, 0], recordImages: preserveImages });
+    const cancel = () => task.cancel();
+    signal.addEventListener('abort', cancel, { once: true });
+    try {
+      await task.promise;
+      signal.throwIfAborted();
+    } finally {
+      signal.removeEventListener('abort', cancel);
+    }
     if (preserveImages) {
       try { darkenOutsideImages(canvas, page.imageCoordinates); }
       catch (error) { canvas.classList.add('dark-filter-fallback'); console.error('Unable to preserve image colors:', error); }
     }
     return canvas;
   } catch (error) {
-    canvas.width = 0; canvas.height = 0;
+    releaseCanvas(canvas);
     throw error;
   }
 }

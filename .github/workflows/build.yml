@@ -86,9 +86,18 @@ jobs:
       - name: Build the desktop packages
         run: bun --bun tauri build ${{ matrix.config_args }} --target ${{ matrix.rust_target }} --bundles ${{ matrix.bundles }} -- --locked
       - name: Test the packaged web build
+        id: browser-tests
         env:
           PREVIEW_PRO_MAX_USE_BUILT_WEB: '1'
         run: bun --bun run test:ui --project=${{ matrix.browser }}
+      - name: Save browser failure reports
+        if: failure() && steps.browser-tests.outcome == 'failure'
+        uses: actions/upload-artifact@v7
+        with:
+          name: browser-failures-${{ matrix.target }}
+          path: test-results/
+          retention-days: 7
+          if-no-files-found: ignore
       - name: Check native macOS webview
         if: runner.os == 'macOS'
         env:

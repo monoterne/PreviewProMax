@@ -210,13 +210,23 @@ test('sidebar and selected thumbnails keep their size when switching tabs', asyn
 });
 
 test('pinch and modified mouse wheel zoom the page around the pointer', async ({ page }) => {
+  // WebKit enables wheel cancellation only while a zoom modifier is held.
+  await page.keyboard.down('Control');
   const before = await page.evaluate(() => {
     const shell = document.querySelector('.page-shell')!.getBoundingClientRect();
-    return { zoom: document.querySelector('#zoom-label')!.textContent, x: shell.left + shell.width / 2, y: shell.top + shell.height / 3 };
+    const zoom = document.querySelector('#zoom-label')!.textContent;
+    const x = shell.left + shell.width / 2;
+    const y = shell.top + shell.height / 3;
+    const canceled = !document.querySelector('#viewer')!.dispatchEvent(new WheelEvent('wheel', {
+      bubbles: true, cancelable: true, deltaY: -160, ctrlKey: true, clientX: x, clientY: y,
+    }));
+    return { zoom, x, y, canceled };
   });
-  await page.locator('#viewer').dispatchEvent('wheel', { deltaY: -160, ctrlKey: true, clientX: before.x, clientY: before.y });
+  await page.keyboard.up('Control');
+  expect(before.canceled).toBe(true);
   await expect(page.locator('#zoom-label')).not.toHaveText(before.zoom!);
   await expect(page.locator('#fit-width')).not.toHaveClass(/selected/);
+  await expect(page.locator('#pages')).not.toHaveAttribute('data-zoom-preview', 'true');
   const position = await page.evaluate(({ x, y }) => {
     const shell = document.querySelector('.page-shell')!.getBoundingClientRect();
     return { x: shell.left + shell.width / 2 - x, y: shell.top + shell.height / 3 - y };
@@ -798,6 +808,44 @@ test('scrolling through a long document keeps retained page canvases bounded', a
   }
 });
 
+test('switching tabs releases a pending raster before the PDF worker responds', async ({ page }) => {
+  await page.getByRole('tab', { name: 'Find', exact: true }).click();
+  await page.evaluate(() => {
+    const createElement = document.createElement.bind(document);
+    const postMessage = Worker.prototype.postMessage;
+    let raster: HTMLCanvasElement | undefined;
+    document.createElement = (tag, options) => {
+      const element = createElement(tag, options);
+      if (element instanceof HTMLCanvasElement) raster = element;
+      return element;
+    };
+    Worker.prototype.postMessage = function (message, ...options) {
+      if (message?.action === 'GetOperatorList' && message.data.pageIndex === 20) {
+        Worker.prototype.postMessage = postMessage;
+        document.createElement = createElement;
+        Object.assign(window, { raster, resumeRaster: () => Reflect.apply(postMessage, this, [message, ...options]) });
+        return;
+      }
+      Reflect.apply(postMessage, this, [message, ...options]);
+    };
+  });
+  await page.locator('#page-number').fill('21');
+  await page.locator('#page-number').press('Enter');
+  await page.waitForFunction(() => {
+    const raster: unknown = Reflect.get(window, 'raster');
+    return raster instanceof HTMLCanvasElement && raster.width > 0;
+  });
+  await page.getByRole('button', { name: 'New tab', exact: true }).click();
+  await page.waitForFunction(() => {
+    const raster: unknown = Reflect.get(window, 'raster');
+    return raster instanceof HTMLCanvasElement && raster.width === 0;
+  });
+  await page.evaluate(() => {
+    const resumeRaster: unknown = Reflect.get(window, 'resumeRaster');
+    if (typeof resumeRaster === 'function') resumeRaster();
+  });
+});
+
 test('selected text markup survives a page rerender and reload', async ({ page }) => {
   await page.locator('.page-shell[data-page="1"] .textLayer span').first().evaluate(span => {
     const range = document.createRange();
@@ -845,12 +893,16 @@ test('pencil and shapes persist and the eraser removes a drawing', async ({ page
 
 test('typing still lists and highlights matches after repeatedly switching sidebar views and documents', async ({ page }) => {
   await page.locator('#open-button').click();
+  await expect(page.getByRole('tab', { name: 'third.pdf', exact: true })).toHaveAttribute('aria-selected', 'true');
   for (const name of ['find-fixture.pdf', 'third.pdf', 'second.pdf']) {
     await page.getByRole('tab', { name, exact: true }).click();
     await page.getByRole('tab', { name: 'Find', exact: true }).click();
     await page.getByRole('tab', { name: 'Pages', exact: true }).click();
     await page.getByRole('tab', { name: 'Find', exact: true }).click();
-    await page.locator('#search-input').pressSequentially('target', { delay: 30 });
+    const input = page.locator('#search-input');
+    await expect(input).toBeFocused();
+    await input.pressSequentially('target', { delay: 30 });
+    await expect(input).toHaveValue('target');
     await expect(page.locator('.search-result')).toHaveCount(72);
     await expect(page.locator('.page-shell').first().locator('.search-match')).toHaveCount(3);
   }

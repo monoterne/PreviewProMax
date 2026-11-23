@@ -5,7 +5,7 @@ import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 import './style.css';
 import { pickDocumentPaths, readDocument, onOpenPath, onMenuAction, newWindow, closeWindow, windowReady, getSessions, saveSession, archiveSession, type OpenedDocument, type SavedTab, type SavedWindow } from './desktop';
 import { mountApp } from './app-shell';
-import { releaseCanvases, renderLinks, renderRaster, renderText, type PdfDestination } from './pdf-rendering';
+import { releaseCanvas, releaseCanvases, renderLinks, renderRaster, renderText, type PdfDestination } from './pdf-rendering';
 import { mountZoom, type ZoomPoint } from './zoom';
 import { mountSidebarTabs, mountThemeSwitch } from './controls';
 import { mountDocumentTabs } from './document-tabs';
@@ -44,8 +44,8 @@ let zoom = 1.25;
 let rotation = 0;
 let sidebarVisible = true;
 let dimensions: Dimensions[] = [];
-let renderEpoch = 0;
-let thumbnailEpoch = 0;
+let pageRender = new AbortController();
+let thumbnailRender = new AbortController();
 let navigationEpoch = 0;
 let pendingMatchEpoch: number | undefined;
 let searchEpoch = 0;
@@ -62,7 +62,7 @@ let manualTheme = false;
 let toastTimer: number | undefined;
 let pageObserver: IntersectionObserver | null = null;
 let thumbObserver: IntersectionObserver | null = null;
-const pageRenders = new WeakMap<HTMLElement, { epoch: number; task: Promise<void> }>();
+const pageRenders = new WeakMap<HTMLElement, { signal: AbortSignal; task: Promise<void> }>();
 const renderedPages = new Set<HTMLElement>();
 const renderedText = new WeakMap<HTMLElement, { divs: HTMLElement[]; strings: string[] }>();
 const textLayerReady = new WeakMap<Element, Promise<void>>();
@@ -162,7 +162,8 @@ function activateDocumentTab(id: string) {
   saveDocumentTab();
   const previousPdf = pdf;
   searchAbort?.abort();
-  searchEpoch++; navigationEpoch++; renderEpoch++; thumbnailEpoch++;
+  searchEpoch++; navigationEpoch++;
+  pageRender.abort(); thumbnailRender.abort();
   window.clearTimeout(searchTimer);
   pageObserver?.disconnect(); thumbObserver?.disconnect();
   releaseCanvases(pages); releaseCanvases(thumbs);
@@ -191,7 +192,7 @@ function activateDocumentTab(id: string) {
   if (pdf) {
     rebuildPages(); makeThumbnails(); updatePageUi();
     const target = pages.querySelector<HTMLElement>(`.page-shell[data-page="${currentPage}"]`)!;
-    void renderPage(target, renderEpoch);
+    void renderPage(target, pageRender.signal);
   }
   viewer.scrollTo({ top: tab.top, left: tab.left, behavior: 'auto' });
   thumbs.scrollTop = tab.thumbnailTop;
@@ -376,7 +377,6 @@ function applyZoom(next: number, keepFit: boolean, point: ZoomPoint | null) {
   zoom = next;
   zoomLabel.textContent = `${Math.round(zoom * 100)}%`;
   $('#fit-width').classList.toggle('selected', fitWidth);
-  renderEpoch++;
   navigationEpoch++;
   updatePageSizes();
   observePages();
@@ -398,15 +398,16 @@ function updatePageSizes() {
 }
 function observePages() {
   pageObserver?.disconnect();
-  const epoch = renderEpoch;
+  pageRender.abort();
+  pageRender = new AbortController();
+  const { signal } = pageRender;
   pageObserver = new IntersectionObserver(entries => {
-    for (const entry of entries) if (entry.isIntersecting) void renderPage(entry.target as HTMLElement, epoch);
+    for (const entry of entries) if (entry.isIntersecting) void renderPage(entry.target as HTMLElement, signal);
   }, { root: viewer, rootMargin: `${pagePreloadMargin}px 0px` });
   pages.querySelectorAll('.page-shell').forEach(el => pageObserver!.observe(el));
 }
 function rebuildPages() {
   if (!pdf) return;
-  renderEpoch++;
   navigationEpoch++;
   pageObserver?.disconnect();
   releaseCanvases(pages);
@@ -428,23 +429,23 @@ function trackRender(job: Promise<void>): Promise<void> {
   renderJobs.add(task);
   return task;
 }
-function renderPage(shell: HTMLElement, epoch: number): Promise<void> {
-  if (epoch !== renderEpoch || shell.parentElement !== pages) return Promise.resolve();
+function renderPage(shell: HTMLElement, signal: AbortSignal): Promise<void> {
+  if (signal.aborted || shell.parentElement !== pages) return Promise.resolve();
   const pending = pageRenders.get(shell);
-  if (pending) return pending.epoch === epoch ? pending.task : pending.task.then(() => renderPage(shell, renderEpoch));
-  const task = trackRender(renderPageContent(shell, epoch).finally(() => {
+  if (pending) return pending.signal === signal ? pending.task : pending.task.then(() => renderPage(shell, signal));
+  const task = trackRender(renderPageContent(shell, signal).finally(() => {
     if (pageRenders.get(shell)?.task === task) pageRenders.delete(shell);
   }));
-  pageRenders.set(shell, { epoch, task });
+  pageRenders.set(shell, { signal, task });
   return task;
 }
-async function renderPageContent(shell: HTMLElement, epoch: number) {
+async function renderPageContent(shell: HTMLElement, signal: AbortSignal) {
   if (!pdf || (shell.dataset.rendered === 'true' && Math.abs(Number(shell.dataset.renderedZoom) - zoom) < 0.0001)) return;
   const sourcePdf = pdf;
   const number = Number(shell.dataset.page);
   try {
     const page = await sourcePdf.getPage(number);
-    if (epoch !== renderEpoch) return;
+    if (signal.aborted) return;
     const natural = page.getViewport({ scale: 1 });
     if (!dimensions[number - 1] || dimensions[number - 1].width !== natural.width || dimensions[number - 1].height !== natural.height) {
       dimensions[number - 1] = { width: natural.width, height: natural.height };
@@ -453,8 +454,8 @@ async function renderPageContent(shell: HTMLElement, epoch: number) {
       shell.style.height = `${d.height * zoom}px`;
     }
     const viewport = page.getViewport({ scale: zoom, rotation: (page.rotate + rotation) % 360 });
-    const canvas = await renderRaster(page, viewport, Math.min(window.devicePixelRatio || 1, 2), darkMode && !invertImages);
-    if (epoch !== renderEpoch) { canvas.width = 0; canvas.height = 0; return; }
+    const canvas = await renderRaster(page, viewport, Math.min(window.devicePixelRatio || 1, 2), darkMode && !invertImages, signal);
+    if (signal.aborted) { releaseCanvas(canvas); return; }
     const content = document.createElement('div');
     content.className = 'page-content';
     content.style.width = `${viewport.width}px`;
@@ -485,7 +486,8 @@ async function renderPageContent(shell: HTMLElement, epoch: number) {
       if (content.isConnected) content.append(links);
     }).catch(error => console.error('Unable to load page links:', error)));
   } catch (error) {
-    if (epoch === renderEpoch) shell.querySelector('.page-loading')?.replaceChildren('Unable to render this page');
+    if (signal.aborted) return;
+    shell.querySelector('.page-loading')?.replaceChildren('Unable to render this page');
     console.error(error);
   }
 }
@@ -528,14 +530,21 @@ function highlightVisibleText(shell: HTMLElement) {
   const page = Number(shell.dataset.page);
   const matches = hits.filter(hit => hit.page === page);
   let itemStart = 0;
+  let firstMatch = 0;
   layer.divs.forEach((span, index) => {
     const source = layer.strings[index];
     const itemEnd = itemStart + source.length;
-    if (!source || !query) { span.textContent = source; itemStart = itemEnd; return; }
+    while (firstMatch < matches.length && matches[firstMatch].end <= itemStart) firstMatch++;
+    if (!source || !query || firstMatch === matches.length || matches[firstMatch].start >= itemEnd) {
+      if (span.childElementCount) span.textContent = source;
+      itemStart = itemEnd;
+      return;
+    }
     const content = document.createDocumentFragment();
     let from = 0;
-    for (const hit of matches) {
-      if (hit.end <= itemStart || hit.start >= itemEnd) continue;
+    for (let matchIndex = firstMatch; matchIndex < matches.length; matchIndex++) {
+      const hit = matches[matchIndex];
+      if (hit.start >= itemEnd) break;
       const start = Math.max(from, hit.start - itemStart);
       const end = Math.min(source.length, hit.end - itemStart);
       if (end <= start) continue;
@@ -590,7 +599,7 @@ async function selectSearchHit(index: number) {
   const shell = pages.children.item(hit.page - 1) as HTMLElement | null;
   if (!shell) return;
   pendingMatchEpoch = epoch;
-  await renderPage(shell, renderEpoch);
+  await renderPage(shell, pageRender.signal);
   const content = shell.querySelector('.page-content');
   if (content) await textLayerReady.get(content);
   if (epoch !== navigationEpoch || selectedHit !== hit) return;
@@ -623,7 +632,8 @@ function setThumbnailSize(button: HTMLElement, d: Dimensions): Dimensions {
 }
 function makeThumbnails() {
   if (!pdf) return;
-  thumbnailEpoch++;
+  thumbnailRender.abort();
+  thumbnailRender = new AbortController();
   thumbObserver?.disconnect();
   releaseCanvases(thumbs);
   thumbs.innerHTML = '';
@@ -637,13 +647,13 @@ function makeThumbnails() {
     button.addEventListener('click', () => goToPage(i));
     thumbs.appendChild(button);
   }
-  const epoch = thumbnailEpoch;
+  const { signal } = thumbnailRender;
   thumbObserver = new IntersectionObserver(entries => {
-    if (epoch !== thumbnailEpoch) return;
+    if (signal.aborted) return;
     for (const entry of entries) {
       const button = entry.target as HTMLElement;
       button.dataset.visible = String(entry.isIntersecting);
-      if (entry.isIntersecting) renderThumbnail(button, epoch);
+      if (entry.isIntersecting) void trackRender(renderThumbnail(button, signal));
       else if (thumbs.clientHeight > 0 && button.dataset.rendered === 'true') {
         releaseCanvases(button);
         const placeholder = document.createElement('span');
@@ -657,23 +667,18 @@ function makeThumbnails() {
   $('#thumb-count').textContent = `${pdf.numPages} ${pdf.numPages === 1 ? 'page' : 'pages'}`;
   updatePageUi();
 }
-function renderThumbnail(button: HTMLElement, epoch: number): Promise<void> {
-  if (epoch !== thumbnailEpoch || button.parentElement !== thumbs) return Promise.resolve();
-  return trackRender(renderThumbnailContent(button, epoch));
-}
-async function renderThumbnailContent(button: HTMLElement, epoch: number) {
+async function renderThumbnail(button: HTMLElement, signal: AbortSignal) {
   if (!pdf || button.dataset.rendered) return;
   button.dataset.rendered = 'loading';
   try {
-    const sourcePdf = pdf;
     const page = await pdf.getPage(Number(button.dataset.page));
-    if (pdf !== sourcePdf || epoch !== thumbnailEpoch) return;
+    if (signal.aborted || button.dataset.visible !== 'true') return;
     const natural = page.getViewport({ scale: 1, rotation: (page.rotate + rotation) % 360 });
     const size = setThumbnailSize(button, { width: natural.width, height: natural.height });
     const viewport = page.getViewport({ scale: size.width / natural.width, rotation: (page.rotate + rotation) % 360 });
-    const canvas = await renderRaster(page, viewport, 1.5, darkMode && !invertImages);
-    if (pdf !== sourcePdf || epoch !== thumbnailEpoch || button.dataset.visible !== 'true') {
-      canvas.width = 0; canvas.height = 0;
+    const canvas = await renderRaster(page, viewport, 1.5, darkMode && !invertImages, signal);
+    if (signal.aborted || button.dataset.visible !== 'true') {
+      releaseCanvas(canvas);
       return;
     }
     button.querySelector('.thumbnail-paper')!.replaceChildren(canvas);
