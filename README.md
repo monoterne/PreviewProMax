@@ -4,7 +4,7 @@ A desktop PDF viewer for macOS, Windows and Linux. It uses Mozilla PDF.js and bu
 
 ## Install and update
 
-**macOS.** (Apple Silicon only) 
+**macOS.** (Apple Silicon only)
 
 ```sh
 brew tap monoterne/preview-pro-max
@@ -15,8 +15,8 @@ Homebrew automatically selects the adaptive icon build on macOS 26 Tahoe and lat
 
 To update, run `brew upgrade --cask preview-pro-max`.
 
-**Linux.** 
-The signed Flatpak repository provides the stable app for x86-64 and ARM64. 
+**Linux.**
+The signed Flatpak repository provides the stable app for x86-64 and ARM64.
 Flathub supplies its GNOME runtime.
 
 ```sh
@@ -32,7 +32,7 @@ To update, run `flatpak update --user com.previewpromax.viewer`. You can also us
 
 | Light mode | Dark mode |
 | --- | --- |
-| ![PDF viewer in light mode with page thumbnails](docs/screenshots/viewer-light.png) | ![PDF viewer in dark mode with page thumbnails](docs/screenshots/viewer-dark.png) |
+| ![Light mode page](docs/screenshots/viewer-light.png) | ![Dark mode page](docs/screenshots/viewer-dark.png) |
 | ![New tab in light mode with previously open windows](docs/screenshots/new-tab-light.png) | ![New tab in dark mode with previously open windows](docs/screenshots/new-tab-dark.png) |
 
 ## Features
@@ -45,7 +45,7 @@ To update, run `flatpak update --user com.previewpromax.viewer`. You can also us
 
 PDF.js opens PDF documents, including PDFs whose names do not end in `.pdf`. The app accepts any file from the picker or a drop so PDF.js can validate it, then reports unsupported files without closing the current document.
 
-Use **View options** in the toolbar for rotation and appearance settings. 
+Use **View options** in the toolbar for rotation and appearance settings.
 Dark mode changes only the display. The **Invert images** switch is available while dark mode is on. Turn it off to leave embedded images in their original colors while darkening the rest of each page.
 
 ## Development
