@@ -3,10 +3,9 @@ updates:
   - package-ecosystem: bun
     directory: /
     schedule:
-      interval: weekly
-      day: monday
-      time: "06:00"
-      timezone: Europe/Helsinki
+      interval: cron
+      cronjob: "0 0 * * *"
+      timezone: Europe/Prague
     open-pull-requests-limit: 3
     commit-message:
       prefix: "chore:"
@@ -18,10 +17,9 @@ updates:
   - package-ecosystem: cargo
     directory: /src-tauri
     schedule:
-      interval: weekly
-      day: tuesday
-      time: "06:00"
-      timezone: Europe/Helsinki
+      interval: cron
+      cronjob: "0 0 * * *"
+      timezone: Europe/Prague
     open-pull-requests-limit: 3
     commit-message:
       prefix: "chore:"
@@ -33,10 +31,9 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
-      day: wednesday
-      time: "06:00"
-      timezone: Europe/Helsinki
+      interval: cron
+      cronjob: "0 0 * * *"
+      timezone: Europe/Prague
     open-pull-requests-limit: 3
     commit-message:
       prefix: "ci:"
