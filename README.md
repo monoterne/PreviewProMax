@@ -11,7 +11,7 @@ brew tap monoterne/preview-pro-max
 brew install --cask monoterne/preview-pro-max/preview-pro-max
 ```
 
-Homebrew installs the legacy build fpr macOS 11-15 and, installs the adaptive build on macOS 26 Tahoe and later.
+Homebrew automatically selects the adaptive icon build on macOS 26 Tahoe and later and the legacy icon build on macOS 11 through 15.
 
 To update, run `brew upgrade --cask preview-pro-max`.
 
