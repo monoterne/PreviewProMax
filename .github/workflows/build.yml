@@ -11,6 +11,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: desktop-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   package:
     name: "ci: package ${{ matrix.target }}"
@@ -20,123 +24,145 @@ jobs:
         include:
           - os: macos-15
             target: mac-legacy
+            rust_target: aarch64-apple-darwin
             bundles: app
             browser: webkit
             require_pinch: false
             config_args: --config src-tauri/tauri.macos.legacy.conf.json
-          - os: macos-latest
+          - os: macos-26
             target: mac-adaptive
+            rust_target: aarch64-apple-darwin
             bundles: app
             browser: webkit
             require_pinch: true
-            config_args: --config src-tauri/tauri.macos.conf.json
           - os: ubuntu-24.04
             target: linux
+            rust_target: x86_64-unknown-linux-gnu
             bundles: deb,rpm
             browser: webkit
+            browser_args: --with-deps
           - os: ubuntu-24.04-arm
             target: linux-arm64
+            rust_target: aarch64-unknown-linux-gnu
             bundles: deb
             browser: webkit
-          - os: windows-latest
+            browser_args: --with-deps
+          - os: windows-2025
             target: win
+            rust_target: x86_64-pc-windows-msvc
             bundles: nsis
             browser: chromium
-            require_pinch: false
-            config_args: ""
+            browser_args: --only-shell
+            pe_machine: '0x8664'
+            portable_name: PreviewProMax-portable.exe
+          - os: windows-11-arm
+            target: win-arm64
+            rust_target: aarch64-pc-windows-msvc
+            bundles: nsis
+            browser: chromium
+            browser_args: --only-shell
+            pe_machine: '0xAA64'
+            portable_name: PreviewProMax-arm64-portable.exe
     runs-on: ${{ matrix.os }}
     env:
-      PREVIEW_PRO_MAX_REQUIRE_PINCH: ${{ matrix.require_pinch }}
+      RELEASE_DIR: src-tauri/target/${{ matrix.rust_target }}/release
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: oven-sh/setup-bun@v2.2.0
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+      - run: bun install --frozen-lockfile
+      - run: bun --bun run typecheck
+      - run: bun test
+      - name: Install the Playwright browser
+        run: bunx --bun --no-install playwright install ${{ matrix.browser_args }} ${{ matrix.browser }}
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev desktop-file-utils weston xdotool xvfb
-      - run: bun install --frozen-lockfile
-      - run: bun run typecheck
-      - run: bun test
-      - run: bunx playwright install ${{ runner.os == 'Linux' && '--with-deps' || '' }} ${{ matrix.browser }}
-      - run: bun run test:ui --project=${{ matrix.browser }}
+        # Playwright's --with-deps already refreshed apt's package lists.
+        run: sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev desktop-file-utils weston xdotool xvfb
+      - name: Build the desktop packages
+        run: bun --bun tauri build ${{ matrix.config_args }} --target ${{ matrix.rust_target }} --bundles ${{ matrix.bundles }} -- --locked
+      - name: Test the packaged web build
+        env:
+          PREVIEW_PRO_MAX_USE_BUILT_WEB: '1'
+        run: bun --bun run test:ui --project=${{ matrix.browser }}
       - name: Check native macOS webview
         if: runner.os == 'macOS'
+        env:
+          PREVIEW_PRO_MAX_REQUIRE_PINCH: ${{ matrix.require_pinch }}
         run: bun run test:native
-      - run: bun tauri build ${{ matrix.config_args }} --bundles ${{ matrix.bundles }}
-      - name: Upload Fedora package
-        if: matrix.target == 'linux'
-        uses: actions/upload-artifact@v7
-        with:
-          name: preview-pro-max-linux-fedora
-          path: src-tauri/target/release/bundle/rpm/*.rpm
-          if-no-files-found: error
-      - name: Check macOS bundle icon
+      - name: Package and verify the macOS download
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          app="src-tauri/target/release/bundle/macos/Preview Pro Max.app"
+          mkdir -p artifacts
+          zip="artifacts/PreviewProMax-${{ matrix.target }}.app.zip"
+          ditto -c -k --sequesterRsrc --keepParent "$RELEASE_DIR/bundle/macos/Preview Pro Max.app" "$zip"
+          unpacked=$(mktemp -d "$RUNNER_TEMP/preview-mac.XXXXXX")
+          trap 'rm -rf "$unpacked"' EXIT
+          ditto -x -k "$zip" "$unpacked"
+          app="$unpacked/Preview Pro Max.app"
+          test -x "$app/Contents/MacOS/preview-pro-max"
           test -s "$app/Contents/Resources/icon.icns"
           if [[ "${{ matrix.target }}" == mac-adaptive ]]; then
             test -s "$app/Contents/Resources/Assets.car"
             test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$app/Contents/Info.plist")" = PreviewProMax
           fi
+          codesign --verify --deep --strict "$app"
       - name: Prepare desktop smoke test fixture
         if: runner.os != 'macOS'
         shell: bash
         run: |
-          bun -e 'import { fixture } from "./tests/fixtures/pdf"; await Bun.write(process.argv[1], new Uint8Array(fixture()))' "$RUNNER_TEMP/preview-fixture.pdf"
-      - name: Open a PDF in the portable Windows app
+          bun -e 'import { fixture } from "./tests/fixtures/pdf"; await Bun.write(process.argv[1], new Uint8Array(fixture()))' "$RUNNER_TEMP/preview-test.pdf"
+      - name: Test the Windows installer and portable app
         if: runner.os == 'Windows'
         shell: pwsh
+        timeout-minutes: 5
         run: |
-          $fixture = Join-Path $env:RUNNER_TEMP 'preview-fixture.pdf'
-          $session = Join-Path $env:APPDATA 'com.previewpromax.viewer/sessions.json'
-          $app = Start-Process './src-tauri/target/release/preview-pro-max.exe' -ArgumentList ('"{0}"' -f $fixture) -PassThru
-          try {
-            $deadline = [DateTime]::UtcNow.AddSeconds(60)
-            do {
-              $app.Refresh()
-              if ($app.HasExited) { throw "Viewer exited with code $($app.ExitCode)" }
-              if ($app.MainWindowHandle -ne [IntPtr]::Zero -and (Test-Path $session)) {
-                $saved = Get-Content -Raw $session | ConvertFrom-Json
-                if ($saved.windows.tabs.path -contains $fixture) { return }
-              }
-              Start-Sleep -Milliseconds 250
-            } while ([DateTime]::UtcNow -lt $deadline)
-            throw "Timed out opening $fixture in the portable viewer"
-          } finally {
-            if (!$app.HasExited) { Stop-Process -Id $app.Id -Force }
-          }
+          $portable = Join-Path 'artifacts' '${{ matrix.portable_name }}'
+          $installer = @(Get-ChildItem "$env:RELEASE_DIR/bundle/nsis/*-setup.exe" -File)
+          if ($installer.Count -ne 1) { throw "Expected one NSIS installer, found $($installer.Count)" }
+          New-Item -ItemType Directory -Path 'artifacts' | Out-Null
+          Copy-Item -LiteralPath "$env:RELEASE_DIR/preview-pro-max.exe" -Destination $portable
+          Copy-Item -LiteralPath $installer[0].FullName -Destination 'artifacts'
+          ./tests/native/windows.ps1 -Portable $portable -Installer (Join-Path 'artifacts' $installer[0].Name) -Machine ${{ matrix.pe_machine }}
       - name: Test installed Ubuntu package
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get install -y ./src-tauri/target/release/bundle/deb/*.deb
-          dbus-run-session -- xvfb-run -a bash tests/native/linux.sh "$RUNNER_TEMP/preview-fixture.pdf"
+          sudo apt-get install -y ./$RELEASE_DIR/bundle/deb/*.deb
+          dbus-run-session -- xvfb-run -a bash tests/native/linux.sh "$RUNNER_TEMP/preview-test.pdf"
           dbus-run-session -- bash tests/native/wayland.sh
-      - name: Prepare downloads
-        shell: bash
+      - name: Upload Ubuntu package
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v7
+        with:
+          name: preview-pro-max-${{ matrix.target }}
+          path: ${{ env.RELEASE_DIR }}/bundle/deb/*.deb
+          compression-level: 0
+          if-no-files-found: error
+      - name: Test installed Fedora package
+        if: matrix.target == 'linux'
         run: |
-          mkdir -p artifacts
-          if [ "${{ runner.os }}" = "macOS" ]; then
-            ditto -c -k --sequesterRsrc --keepParent "src-tauri/target/release/bundle/macos/Preview Pro Max.app" "artifacts/PreviewProMax-${{ matrix.target }}.app.zip"
-          elif [ "${{ runner.os }}" = "Linux" ]; then
-            cp src-tauri/target/release/bundle/deb/*.deb artifacts/
-          else
-            cp src-tauri/target/release/preview-pro-max.exe artifacts/PreviewProMax-portable.exe
-            cp src-tauri/target/release/bundle/nsis/*.exe artifacts/
-          fi
-      - name: Check legacy macOS download
-        if: matrix.target == 'mac-legacy'
-        shell: bash
-        run: |
-          unpacked=$(mktemp -d "$RUNNER_TEMP/preview-mac.XXXXXX")
-          trap 'rm -rf "$unpacked"' EXIT
-          ditto -x -k artifacts/PreviewProMax-mac-legacy.app.zip "$unpacked"
-          app="$unpacked/Preview Pro Max.app"
-          test -x "$app/Contents/MacOS/preview-pro-max"
-          codesign --verify --deep --strict "$app"
+          docker run --rm \
+            --mount "type=bind,src=$PWD/$RELEASE_DIR/bundle/rpm,dst=/packages,readonly" \
+            --mount "type=bind,src=$PWD/tests/native/linux.sh,dst=/smoke-test.sh,readonly" \
+            --mount "type=bind,src=$RUNNER_TEMP/preview-test.pdf,dst=/fixture.pdf,readonly" \
+            registry.fedoraproject.org/fedora:44 bash -euo pipefail -c '
+              dnf install -y /packages/*.rpm dbus-daemon desktop-file-utils jq xdotool xorg-x11-server-Xvfb mesa-dri-drivers google-noto-sans-vf-fonts
+              # Docker restricts the namespaces used by the WebKit sandbox.
+              WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 dbus-run-session -- xvfb-run -a bash /smoke-test.sh /fixture.pdf
+            '
+      - name: Upload Fedora package
+        if: matrix.target == 'linux'
+        uses: actions/upload-artifact@v7
+        with:
+          name: preview-pro-max-linux-fedora
+          path: ${{ env.RELEASE_DIR }}/bundle/rpm/*.rpm
+          compression-level: 0
+          if-no-files-found: error
       - name: Upload legacy macOS download
         if: matrix.target == 'mac-legacy'
         uses: actions/upload-artifact@v7
@@ -144,24 +170,14 @@ jobs:
           path: artifacts/PreviewProMax-mac-legacy.app.zip
           archive: false
           if-no-files-found: error
-      - uses: actions/upload-artifact@v7
-        if: matrix.target != 'mac-legacy'
+      - name: Upload Windows or adaptive macOS downloads
+        if: runner.os == 'Windows' || matrix.target == 'mac-adaptive'
+        uses: actions/upload-artifact@v7
         with:
           name: preview-pro-max-${{ matrix.target }}
           path: artifacts/*
+          compression-level: ${{ runner.os == 'macOS' && '0' || '6' }}
           if-no-files-found: error
-      - name: Test installed Fedora package
-        if: matrix.target == 'linux'
-        run: |
-          docker run --rm \
-            --mount "type=bind,src=$PWD/src-tauri/target/release/bundle/rpm,dst=/packages,readonly" \
-            --mount "type=bind,src=$PWD/tests/native/linux.sh,dst=/smoke-test.sh,readonly" \
-            --mount "type=bind,src=$RUNNER_TEMP/preview-fixture.pdf,dst=/fixture.pdf,readonly" \
-            registry.fedoraproject.org/fedora:44 bash -euo pipefail -c '
-              dnf install -y /packages/*.rpm dbus-daemon desktop-file-utils jq xdotool xorg-x11-server-Xvfb mesa-dri-drivers google-noto-sans-vf-fonts
-              # Docker restricts the namespaces used by the WebKit sandbox.
-              WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 dbus-run-session -- xvfb-run -a bash /smoke-test.sh /fixture.pdf
-            '
       - name: Save compiled icon catalog
         if: matrix.target == 'mac-adaptive'
         uses: actions/upload-artifact@v7

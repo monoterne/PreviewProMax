@@ -7,7 +7,7 @@
     "icons": "bun scripts/generate-icons.ts",
     "icons:mac": "bun scripts/compile-icon.ts",
     "dev:web": "vite --host 127.0.0.1",
-    "build:web": "vite build",
+    "build:web": "bunx --bun --no-install vite build",
     "dev": "tauri dev",
     "build": "tauri build",
     "dist:linux": "tauri build --bundles deb,rpm",

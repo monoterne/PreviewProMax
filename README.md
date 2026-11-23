@@ -61,6 +61,13 @@ bun run dist:win # on Windows: NSIS installer and portable .exe
 
 The native outputs are in `src-tauri/target/release/bundle/`. On Windows, `src-tauri/target/release/preview-pro-max.exe` is the portable executable and requires the system WebView2 runtime. The NSIS installer can download WebView2 if it is missing. The GitHub Actions desktop workflow publishes downloads for each platform.
 
+| Windows architecture | CI artifact | Portable executable |
+| --- | --- | --- |
+| x64 | `preview-pro-max-win` | `PreviewProMax-portable.exe` |
+| ARM64 | `preview-pro-max-win-arm64` | `PreviewProMax-arm64-portable.exe` |
+
+Each Windows artifact also contains an NSIS `-setup.exe` installer for that architecture.
+
 For x86-64 Linux, unzip the artifact for your distribution and run its install command from that directory.
 
 | Distribution | CI artifact | Install |
