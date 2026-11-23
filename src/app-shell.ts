@@ -31,6 +31,7 @@ export function mountApp(app: HTMLDivElement) {
   <header class="toolbar"${macHeader ? ' data-window-controls="macos" data-tauri-drag-region="deep"' : ''}>
     <div class="toolbar-left">
       <button id="sidebar-toggle" class="icon-button" aria-label="Toggle sidebar" aria-controls="sidebar" aria-expanded="false" title="Toggle sidebar" disabled>${icon('panel')}</button>
+      <span id="document-title" class="toolbar-title" dir="auto" hidden></span>
     </div>
     <div class="toolbar-center" id="navigation" role="group" aria-label="Page navigation and zoom" data-tauri-drag-region="false" hidden>
       <button class="icon-button" id="previous-page" aria-label="Previous page" title="Previous page">${icon('chevronLeft')}</button>

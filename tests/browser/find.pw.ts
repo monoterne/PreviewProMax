@@ -488,7 +488,10 @@ for (const { width, height, macHeader } of [
     }, name);
     await page.reload();
     await expect(page.locator('.page-shell').first()).toHaveAttribute('data-rendered', 'true');
-    await expect(page.locator('.toolbar')).not.toContainText(name.replace(/\.pdf$/, ''));
+    const title = page.locator('#document-title');
+    await expect(title).toHaveText(name);
+    await expect(title).toHaveAttribute('title', name);
+    await expect(title).toHaveCSS('text-overflow', 'ellipsis');
     if (macHeader) await expect(page.locator('.toolbar')).toHaveAttribute('data-tauri-drag-region', 'deep');
     await page.getByRole('tab', { name, exact: true }).focus();
     for (const theme of ['light', 'dark']) {
@@ -504,9 +507,14 @@ for (const { width, height, macHeader } of [
           });
         const left = document.querySelector('.toolbar-left')!.getBoundingClientRect();
         const right = document.querySelector('.toolbar-right')!.getBoundingClientRect();
+        const sidebarButton = document.querySelector('#sidebar-toggle')!.getBoundingClientRect();
+        const title = document.querySelector('#document-title')!;
+        const titleBounds = title.getBoundingClientRect();
+        const titleFits = titleBounds.width > 0 && titleBounds.left >= sidebarButton.right && titleBounds.right === left.right;
+        const titleOverflows = title.scrollWidth > title.clientWidth;
         const navFits = nav.top >= Math.max(left.bottom, right.bottom) ||
           (left.right <= nav.left && nav.right <= right.left);
-        return { buttons, headerBottom: header.bottom, tabsTop: tabs.top, navBottom: nav.bottom, navFits, sidesFit: left.right <= right.left };
+        return { buttons, headerBottom: header.bottom, tabsTop: tabs.top, navBottom: nav.bottom, navFits, sidesFit: left.right <= right.left, titleFits, titleOverflows };
       });
       for (const control of geometry.buttons) {
         expect(control.left, control.name!).toBeGreaterThanOrEqual(macHeader && control.name === 'Toggle sidebar' ? 92 : 0);
@@ -516,6 +524,8 @@ for (const { width, height, macHeader } of [
       expect(geometry.tabsTop).toBeGreaterThanOrEqual(geometry.navBottom);
       expect(geometry.navFits).toBe(true);
       expect(geometry.sidesFit).toBe(true);
+      expect(geometry.titleFits).toBe(true);
+      expect(geometry.titleOverflows).toBe(true);
       await page.screenshot({ path: `test-results/compact-${frame}-${width}-${theme}.png` });
     }
     await page.getByRole('button', { name: 'Next page', exact: true }).click();
@@ -559,6 +569,7 @@ test('open tabs are saved and listed on an empty tab', async ({ page }) => {
   expect(saved.tabs[0].path).toBe('find-fixture.pdf');
   expect(saved.tabs[0].zoom).toBeGreaterThan(1);
   await page.getByRole('button', { name: 'New tab', exact: true }).click();
+  await expect(page.locator('#document-title')).toBeHidden();
   await expect(page.locator('#recent-windows')).toBeVisible();
   await expect(page.locator('.recent-window')).toContainText('find-fixture.pdf');
   await page.screenshot({ path: 'test-results/recent-light.png' });
@@ -629,9 +640,11 @@ test('tabs restore page and find state while releasing inactive page canvases', 
   await expect(page.locator('#page-number')).toHaveValue('11');
   await page.locator('#open-button').click();
   await expect(page.getByRole('tab', { name: 'third.pdf', exact: true })).toBeVisible();
+  await expect(page.locator('#document-title')).toHaveText('third.pdf');
   await expect(page.locator('.document-tab')).toHaveCount(3);
   await expect(page.locator('#search-input')).toHaveValue('');
   await page.getByRole('tab', { name: 'find-fixture.pdf', exact: true }).click();
+  await expect(page.locator('#document-title')).toHaveText('find-fixture.pdf');
   await expect(page.locator('#search-input')).toHaveValue('target');
   await expect(page.locator('.search-result')).toHaveCount(72);
   await expect(page.locator('.search-result.active')).toHaveAttribute('data-index', '31');

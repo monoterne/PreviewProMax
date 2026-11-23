@@ -74,8 +74,9 @@ svg { flex: none; }
   background: transparent; position: relative; z-index: 10;
 }
 .toolbar-left, .toolbar-center, .toolbar-right { display: flex; align-items: center; gap: var(--space-1); min-width: 0; }
-.toolbar-left { grid-column: 1; }
+.toolbar-left { grid-column: 1; gap: var(--space-2); }
 .toolbar[data-window-controls="macos"] .toolbar-left { padding-left: 80px; }
+.toolbar-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .toolbar-right { grid-column: 3; justify-content: flex-end; }
 .toolbar-center { grid-column: 2; padding: 2px var(--space-1); border: 1px solid var(--border); border-radius: var(--radius-round); background: var(--surface); box-shadow: var(--control-shadow); }
 .toolbar-divider { width: 1px; height: 16px; flex: none; background: var(--border); margin: 0 var(--space-1); }
@@ -126,9 +127,10 @@ svg { flex: none; }
 
 .document-bar { flex: none; display: flex; align-items: center; padding: 0 var(--space-3); background: transparent; border-bottom: 1px solid var(--border); }
 #document-tabs-root { flex: 1; min-width: 0; }
-.document-tabs { display: flex; align-items: center; gap: var(--space-1); }
+.document-tabs { display: flex; align-items: center; }
+#new-tab { width: var(--space-6); }
 .document-tab-list { display: flex; align-items: center; gap: var(--space-1); overflow: auto hidden; scrollbar-width: thin; min-width: 0; padding: var(--space-1) 0; }
-.document-tab { position: relative; display: flex; flex: 0 1 200px; min-width: 120px; max-width: 220px; height: 32px; align-items: center; border: 1px solid transparent; border-radius: var(--radius-md); }
+.document-tab { position: relative; display: flex; flex: 0 1 200px; min-width: 120px; max-width: 200px; height: 32px; align-items: center; border: 1px solid transparent; border-radius: var(--radius-md); }
 .document-tab:hover { background: var(--surface-hover); }
 .document-tab[data-active="true"] { background: var(--surface); border-color: var(--border); }
 .document-tab-title { flex: 1; height: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; padding: 0 var(--space-3); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--muted); font-size: 12px; }

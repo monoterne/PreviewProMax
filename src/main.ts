@@ -244,7 +244,12 @@ function requestPassword(wrongPassword: boolean): Promise<string | null> {
 }
 $<HTMLButtonElement>('#password-cancel').addEventListener('click', () => $<HTMLDialogElement>('#password-dialog').close('cancel'));
 function updateTitle() {
-  document.title = pdf ? `${documentName} — Preview Pro Max` : 'Preview Pro Max';
+  const name = pdf ? documentName : '';
+  const title = $('#document-title');
+  title.textContent = name;
+  title.title = name;
+  title.hidden = !pdf;
+  document.title = pdf ? `${name} — Preview Pro Max` : 'Preview Pro Max';
 }
 function showTab(tab: SidebarTab, focus = true) {
   activeTab = tab;
