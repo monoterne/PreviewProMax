@@ -13,9 +13,22 @@ using System.Runtime.InteropServices;
 public static class ViewerFrame {
     [StructLayout(LayoutKind.Sequential)]
     struct Rect { public int Left, Top, Right, Bottom; }
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string className, string title);
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
+    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr window);
     [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr window, out Rect rect);
     [DllImport("user32.dll")] static extern bool MoveWindow(IntPtr window, int x, int y, int width, int height, bool repaint);
     [DllImport("user32.dll")] static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
+
+    public static IntPtr Find(uint processId) {
+        IntPtr window = IntPtr.Zero;
+        while ((window = FindWindowEx(IntPtr.Zero, window, null, "Preview Pro Max")) != IntPtr.Zero) {
+            uint owner;
+            GetWindowThreadProcessId(window, out owner);
+            if (owner == processId && IsWindowVisible(window)) return window;
+        }
+        return IntPtr.Zero;
+    }
 
     public static int[] Read(IntPtr window) {
         IntPtr previous = SetThreadDpiAwarenessContext(new IntPtr(-4));
@@ -59,7 +72,7 @@ function Test-PdfOpen([string] $Path, [string] $Fixture) {
     do {
       $app.Refresh()
       if ($app.HasExited) { throw "Viewer $Path exited with code $($app.ExitCode)" }
-      if ($app.MainWindowHandle -ne [IntPtr]::Zero -and (Test-Path -LiteralPath $session)) {
+      if ([ViewerFrame]::Find($app.Id) -ne [IntPtr]::Zero -and (Test-Path -LiteralPath $session)) {
         $saved = Get-Content -LiteralPath $session -Raw | ConvertFrom-Json
         $paths = $saved.windows | ForEach-Object { $_.tabs } | ForEach-Object { $_.path }
         if ($paths -contains $Fixture) { return }
@@ -80,7 +93,8 @@ function Wait-ViewerWindow([Diagnostics.Process] $App) {
   for ($attempt = 0; $attempt -lt 120; $attempt++) {
     $App.Refresh()
     if ($App.HasExited) { throw "Viewer exited with code $($App.ExitCode)" }
-    if ($App.MainWindowHandle -ne [IntPtr]::Zero) { return $App.MainWindowHandle }
+    $window = [ViewerFrame]::Find($App.Id)
+    if ($window -ne [IntPtr]::Zero) { return $window }
     Start-Sleep -Milliseconds 250
   }
   throw 'Timed out waiting for the viewer window'
@@ -103,7 +117,7 @@ function Test-FrameRestore([string] $Path, [string] $Fixture) {
       }
       Start-Sleep -Milliseconds 250
     }
-    if (!$stored) { throw 'Viewer did not save the moved window' }
+    if (!$stored) { throw "Viewer did not save the moved window at $expected. Session: $(ConvertTo-Json $saved -Compress -Depth 8)" }
     Stop-Process -InputObject $app -Force
     $app.WaitForExit()
     $app.Dispose()

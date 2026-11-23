@@ -20,7 +20,9 @@ cp "$work/first file.pdf" "$work/other/forwarded file.pdf"
 session="$XDG_CONFIG_HOME/com.previewpromax.viewer/sessions.json"
 wait_for_tabs() {
   for ((i=0; i<120; i++)); do
-    if jq -e --argjson paths "$1" '.windows | length == 1 and (.[0].tabs | map(.path)) == $paths' "$session" 2>/dev/null; then
+    if jq -e --argjson paths "$1" --argjson after "${2:-0}" '
+      .windows | length == 1 and .[0].updated > $after and (.[0].tabs | map(.path)) == $paths
+    ' "$session" >/dev/null 2>&1; then
       return
     fi
     sleep 0.5
@@ -34,7 +36,8 @@ gio launch "$desktop" "$work/first file.pdf" "$work/second.pdf"
 timeout 60 xdotool search --sync --onlyvisible --name 'Preview Pro Max$'
 wait_for_tabs "$(jq -cn --args '$ARGS.positional' "$work/first file.pdf" "$work/second.pdf")"
 (cd "$work/other" && timeout 30 preview-pro-max 'forwarded file.pdf')
-wait_for_tabs "$(jq -cn --args '$ARGS.positional' "$work/first file.pdf" "$work/second.pdf" "$work/other/forwarded file.pdf")"
+all_tabs=$(jq -cn --args '$ARGS.positional' "$work/first file.pdf" "$work/second.pdf" "$work/other/forwarded file.pdf")
+wait_for_tabs "$all_tabs"
 
 # Move and resize the native window, then reopen the saved session.
 window=$(xdotool search --onlyvisible --name 'Preview Pro Max$' | head -n 1)
@@ -51,6 +54,7 @@ for ((i=0; i<60; i++)); do
   if ! xdotool getwindowname "$window" >/dev/null 2>&1; then break; fi
   sleep 0.25
 done
+last_update=$(jq -er '.windows[0].updated' "$session")
 preview-pro-max &
 reopened=$!
 window=$(timeout 30 xdotool search --sync --all --onlyvisible --pid "$reopened" --name 'Preview Pro Max$' | head -n 1)
@@ -58,6 +62,7 @@ geometry=$(xdotool getwindowgeometry --shell "$window" | sed -nE '/^(X|Y|WIDTH|H
 test "$geometry" = $'X=80\nY=60\nWIDTH=900\nHEIGHT=620'
 
 # Find text on the last page in the real WebKitGTK view, then verify navigation.
+wait_for_tabs "$all_tabs" "$last_update"
 xdotool windowfocus --sync "$window"
 xdotool key ctrl+f
 xdotool type --clearmodifiers 'Page 24'
